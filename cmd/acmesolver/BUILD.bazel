@@ -1,18 +1,6 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
-load("//hack/build:docker.bzl", "covered_image", "image")
-
-image(
-    name = "image",
-    binary = ":acmesolver",
-    component = "acmesolver",
-    visibility = ["//visibility:public"],
-)
-
-covered_image(
-    name = "image.covered",
-    component = "acmesolver",
-    visibility = ["//visibility:public"],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("//build:version.bzl", "version_x_defs")
+load("//build:go_binary.bzl", "go_binary")
 
 go_library(
     name = "go_default_library",
@@ -20,8 +8,8 @@ go_library(
     importpath = "github.com/jetstack/cert-manager/cmd/acmesolver",
     visibility = ["//visibility:private"],
     deps = [
-        "//pkg/issuer/acme/http/solver:go_default_library",
-        "//pkg/logs:go_default_library",
+        "//cmd/acmesolver/app:go_default_library",
+        "//pkg/util/cmd:go_default_library",
     ],
 )
 
@@ -41,7 +29,10 @@ filegroup(
 
 filegroup(
     name = "all-srcs",
-    srcs = [":package-srcs"],
+    srcs = [
+        ":package-srcs",
+        "//cmd/acmesolver/app:all-srcs",
+    ],
     tags = ["automanaged"],
     visibility = ["//visibility:public"],
 )

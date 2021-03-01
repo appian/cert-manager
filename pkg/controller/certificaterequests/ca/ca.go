@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests"
 	crutil "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/util"
@@ -70,6 +70,9 @@ func NewCA(ctx *controllerpkg.Context) *CA {
 	}
 }
 
+// Returns a nil certificate and no error when the error is not retryable,
+// i.e., re-running the Sign command will lead to the same result. A
+// retryable error would be for example a network failure.
 func (c *CA) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerObj cmapi.GenericIssuer) (*issuerpkg.IssueResponse, error) {
 	log := logf.FromContext(ctx, "sign")
 
@@ -111,6 +114,9 @@ func (c *CA) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerObj c
 		return nil, nil
 	}
 
+	template.CRLDistributionPoints = issuerObj.GetSpec().CA.CRLDistributionPoints
+	template.OCSPServer = issuerObj.GetSpec().CA.OCSPServers
+
 	certPEM, caPEM, err := pki.SignCSRTemplate(caCerts, caKey, template)
 	if err != nil {
 		message := "Error signing certificate"
@@ -119,7 +125,7 @@ func (c *CA) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerObj c
 		return nil, err
 	}
 
-	log.Info("certificate issued")
+	log.V(logf.DebugLevel).Info("certificate issued")
 
 	return &issuerpkg.IssueResponse{
 		Certificate: certPEM,

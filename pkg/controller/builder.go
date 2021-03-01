@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,12 +31,20 @@ type Builder struct {
 	// the queueingController
 	context *Context
 
+	// name is the name for this controller
+	name string
+
 	// a reference to the root context for this controller, used
 	// as a basis for other contexts and for logging
 	ctx context.Context
 
 	// the actual controller implementation
 	impl queueingController
+
+	// runFirstFuncs are a list of functions that will be called immediately
+	// after the controller has been initialised, once. They are run in queue, sequentially,
+	// and block runDurationFuncs until complete.
+	runFirstFuncs []runFunc
 
 	// runDurationFuncs are a list of functions that will be called every
 	// 'duration'
@@ -49,6 +57,7 @@ func NewBuilder(controllerctx *Context, name string) *Builder {
 	return &Builder{
 		context: controllerctx,
 		ctx:     ctx,
+		name:    name,
 	}
 }
 
@@ -68,6 +77,14 @@ func (b *Builder) With(function func(context.Context), duration time.Duration) *
 	return b
 }
 
+// First will register a function that will be called once, after the
+// controller has been initialised. They are queued, run sequentially, and
+// block "With" runDurationFuncs from running until all are complete.
+func (b *Builder) First(function func(context.Context)) *Builder {
+	b.runFirstFuncs = append(b.runFirstFuncs, function)
+	return b
+}
+
 func (b *Builder) Complete() (Interface, error) {
 	if b.context == nil {
 		return nil, fmt.Errorf("controller context must be non-nil")
@@ -75,16 +92,10 @@ func (b *Builder) Complete() (Interface, error) {
 	if b.impl == nil {
 		return nil, fmt.Errorf("controller implementation must be non-nil")
 	}
-	queue, mustSync, additionalInformers, err := b.impl.Register(b.context)
+	queue, mustSync, err := b.impl.Register(b.context)
 	if err != nil {
 		return nil, fmt.Errorf("error registering controller: %v", err)
 	}
-	return &controller{
-		ctx:                 b.ctx,
-		syncHandler:         b.impl.ProcessItem,
-		mustSync:            mustSync,
-		additionalInformers: additionalInformers,
-		runDurationFuncs:    b.runDurationFuncs,
-		queue:               queue,
-	}, nil
+
+	return NewController(b.ctx, b.name, b.context.Metrics, b.impl.ProcessItem, mustSync, b.runDurationFuncs, queue), nil
 }

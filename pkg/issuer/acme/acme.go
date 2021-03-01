@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,52 +19,53 @@ package acme
 import (
 	"fmt"
 
+	core "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
-	"k8s.io/utils/clock"
+	"k8s.io/client-go/tools/record"
 
-	"github.com/jetstack/cert-manager/pkg/acme"
+	"github.com/jetstack/cert-manager/pkg/acme/accounts"
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
-	cmacmelisters "github.com/jetstack/cert-manager/pkg/client/listers/acme/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/issuer"
+	"github.com/jetstack/cert-manager/pkg/metrics"
 )
 
 // Acme is an issuer for an ACME server. It can be used to register and obtain
 // certificates from any ACME server. It supports DNS01 and HTTP01 challenge
 // mechanisms.
 type Acme struct {
-	*controller.Context
-	issuer v1alpha2.GenericIssuer
-	helper acme.Helper
+	issuer v1.GenericIssuer
 
 	secretsLister corelisters.SecretLister
-	orderLister   cmacmelisters.OrderLister
+	secretsClient core.SecretsGetter
+	recorder      record.EventRecorder
 
-	// used for testing
-	clock clock.Clock
+	// namespace of referenced resources when the given issuer is a ClusterIssuer
+	clusterResourceNamespace string
+	// used as a cache for ACME clients
+	accountRegistry accounts.Registry
+
+	// metrics is used to create instrumented ACME clients
+	metrics *metrics.Metrics
 }
 
 // New returns a new ACME issuer interface for the given issuer.
-func New(ctx *controller.Context, issuer v1alpha2.GenericIssuer) (issuer.Interface, error) {
+func New(ctx *controller.Context, issuer v1.GenericIssuer) (issuer.Interface, error) {
 	if issuer.GetSpec().ACME == nil {
 		return nil, fmt.Errorf("acme config may not be empty")
 	}
 
-	// TODO: invent a way to ensure WaitForCacheSync is called for all listers
-	// we are interested in
-
 	secretsLister := ctx.KubeSharedInformerFactory.Core().V1().Secrets().Lister()
-	orderLister := ctx.SharedInformerFactory.Acme().V1alpha2().Orders().Lister()
 
 	a := &Acme{
-		Context: ctx,
-		helper:  acme.NewHelper(secretsLister, ctx.ClusterResourceNamespace),
-		issuer:  issuer,
-
-		secretsLister: secretsLister,
-		orderLister:   orderLister,
-		clock:         clock.RealClock{},
+		issuer:                   issuer,
+		secretsLister:            secretsLister,
+		secretsClient:            ctx.Client.CoreV1(),
+		recorder:                 ctx.Recorder,
+		clusterResourceNamespace: ctx.IssuerOptions.ClusterResourceNamespace,
+		accountRegistry:          ctx.ACMEOptions.AccountRegistry,
+		metrics:                  ctx.Metrics,
 	}
 
 	return a, nil

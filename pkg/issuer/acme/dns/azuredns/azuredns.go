@@ -13,17 +13,18 @@ package azuredns
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
-	"k8s.io/klog"
+	"github.com/go-logr/logr"
 
 	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
+
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 // DNSProvider implements the util.ChallengeProvider interface
@@ -33,27 +34,12 @@ type DNSProvider struct {
 	zoneClient        dns.ZonesClient
 	resourceGroupName string
 	zoneName          string
-}
-
-// NewDNSProvider returns a DNSProvider instance configured for the Azure
-// DNS service.
-// Credentials are automatically detected from environment variables
-func NewDNSProvider(dns01Nameservers []string) (*DNSProvider, error) {
-
-	clientID := os.Getenv("AZURE_CLIENT_ID")
-	clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
-	subscriptionID := os.Getenv("AZURE_SUBSCRIPTION_ID")
-	tenantID := os.Getenv("AZURE_TENANT_ID")
-	resourceGroupName := ("AZURE_RESOURCE_GROUP")
-	zoneName := ("AZURE_ZONE_NAME")
-	environment := ("AZURE_ENVIRONMENT")
-
-	return NewDNSProviderCredentials(environment, clientID, clientSecret, subscriptionID, tenantID, resourceGroupName, zoneName, dns01Nameservers)
+	log               logr.Logger
 }
 
 // NewDNSProviderCredentials returns a DNSProvider instance configured for the Azure
 // DNS service using static credentials from its parameters
-func NewDNSProviderCredentials(environment, clientID, clientSecret, subscriptionID, tenantID, resourceGroupName, zoneName string, dns01Nameservers []string) (*DNSProvider, error) {
+func NewDNSProviderCredentials(environment, clientID, clientSecret, subscriptionID, tenantID, resourceGroupName, zoneName string, dns01Nameservers []string, ambient bool) (*DNSProvider, error) {
 	env := azure.PublicCloud
 	if environment != "" {
 		var err error
@@ -63,12 +49,7 @@ func NewDNSProviderCredentials(environment, clientID, clientSecret, subscription
 		}
 	}
 
-	oauthConfig, err := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	spt, err := adal.NewServicePrincipalToken(*oauthConfig, clientID, clientSecret, env.ResourceManagerEndpoint)
+	spt, err := getAuthorization(env, clientID, clientSecret, subscriptionID, tenantID, ambient)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +66,37 @@ func NewDNSProviderCredentials(environment, clientID, clientSecret, subscription
 		zoneClient:        zc,
 		resourceGroupName: resourceGroupName,
 		zoneName:          zoneName,
+		log:               logf.Log.WithName("azure-dns"),
 	}, nil
+}
+
+func getAuthorization(env azure.Environment, clientID, clientSecret, subscriptionID, tenantID string, ambient bool) (*adal.ServicePrincipalToken, error) {
+	if clientID != "" {
+		logf.Log.V(logf.InfoLevel).Info("azuredns authenticating with clientID and secret key")
+		oauthConfig, err := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		spt, err := adal.NewServicePrincipalToken(*oauthConfig, clientID, clientSecret, env.ResourceManagerEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		return spt, nil
+	}
+	logf.Log.V(logf.InfoLevel).Info("No ClientID found:  authenticating azuredns with managed identity (MSI)")
+	if !ambient {
+		return nil, fmt.Errorf("ClientID is not set but neither `--cluster-issuer-ambient-credentials` nor `--issuer-ambient-credentials` are set. These are necessary to enable Azure Managed Identities")
+	}
+	msiEndpoint, err := adal.GetMSIVMEndpoint()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get the managed service identity endpoint: %v", err)
+	}
+
+	spt, err := adal.NewServicePrincipalTokenFromMSI(msiEndpoint, env.ServiceManagementEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the managed service identity token: %v", err)
+	}
+	return spt, nil
 }
 
 // Present creates a TXT record using the specified parameters
@@ -97,7 +108,7 @@ func (c *DNSProvider) Present(domain, fqdn, value string) error {
 func (c *DNSProvider) CleanUp(domain, fqdn, value string) error {
 	z, err := c.getHostedZoneName(fqdn)
 	if err != nil {
-		klog.Infof("Error getting hosted zone name for: %s, %v", fqdn, err)
+		c.log.Error(err, "Error getting hosted zone name for:", fqdn)
 		return err
 	}
 
@@ -126,7 +137,7 @@ func (c *DNSProvider) createRecord(fqdn, value string, ttl int) error {
 
 	z, err := c.getHostedZoneName(fqdn)
 	if err != nil {
-		klog.Infof("Error getting hosted zone name for: %s, %v", fqdn, err)
+		c.log.Error(err, "Error getting hosted zone name for:", fqdn)
 		return err
 	}
 
@@ -139,7 +150,7 @@ func (c *DNSProvider) createRecord(fqdn, value string, ttl int) error {
 		*rparams, "", "")
 
 	if err != nil {
-		klog.Infof("Error creating TXT: %s, %v", z, err)
+		c.log.Error(err, "Error creating TXT:", z)
 		return err
 	}
 	return nil

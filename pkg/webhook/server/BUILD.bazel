@@ -1,25 +1,27 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "server.go",
-        "source.go",
-        "tls_file_source.go",
-    ],
+    srcs = ["server.go"],
     importpath = "github.com/jetstack/cert-manager/pkg/webhook/server",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/logs:go_default_library",
         "//pkg/util/profiling:go_default_library",
         "//pkg/webhook/handlers:go_default_library",
+        "//pkg/webhook/server/tls:go_default_library",
+        "//pkg/webhook/server/util:go_default_library",
         "@com_github_go_logr_logr//:go_default_library",
+        "@io_k8s_api//admission/v1:go_default_library",
         "@io_k8s_api//admission/v1beta1:go_default_library",
+        "@io_k8s_apiextensions_apiserver//pkg/apis/apiextensions/install:go_default_library",
+        "@io_k8s_apiextensions_apiserver//pkg/apis/apiextensions/v1:go_default_library",
         "@io_k8s_apiextensions_apiserver//pkg/apis/apiextensions/v1beta1:go_default_library",
         "@io_k8s_apimachinery//pkg/apis/meta/v1:go_default_library",
         "@io_k8s_apimachinery//pkg/runtime:go_default_library",
         "@io_k8s_apimachinery//pkg/runtime/schema:go_default_library",
         "@io_k8s_apimachinery//pkg/runtime/serializer/json:go_default_library",
+        "@io_k8s_component_base//cli/flag:go_default_library",
         "@io_k8s_sigs_controller_runtime//pkg/log:go_default_library",
     ],
 )
@@ -33,7 +35,26 @@ filegroup(
 
 filegroup(
     name = "all-srcs",
-    srcs = [":package-srcs"],
+    srcs = [
+        ":package-srcs",
+        "//pkg/webhook/server/tls:all-srcs",
+        "//pkg/webhook/server/util:all-srcs",
+    ],
     tags = ["automanaged"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["server_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//pkg/logs/testing:go_default_library",
+        "//pkg/webhook/handlers:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@io_k8s_apiextensions_apiserver//pkg/apis/apiextensions/v1:go_default_library",
+        "@io_k8s_apiextensions_apiserver//pkg/apis/apiextensions/v1beta1:go_default_library",
+        "@io_k8s_apimachinery//pkg/runtime:go_default_library",
+    ],
 )

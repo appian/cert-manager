@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ import (
 
 	"github.com/jetstack/cert-manager/pkg/acme/webhook"
 	whapi "github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/acmedns"
@@ -43,11 +43,7 @@ import (
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/route53"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 	webhookslv "github.com/jetstack/cert-manager/pkg/issuer/acme/dns/webhook"
-	"github.com/jetstack/cert-manager/pkg/logs"
-)
-
-const (
-	cloudDNSServiceAccountKey = "service-account.json"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 // solver is the old solver type interface.
@@ -61,10 +57,10 @@ type solver interface {
 // It is useful for mocking out a given provider since an alternate set of
 // constructors may be set.
 type dnsProviderConstructors struct {
-	cloudDNS     func(project string, serviceAccount []byte, dns01Nameservers []string, ambient bool) (*clouddns.DNSProvider, error)
+	cloudDNS     func(project string, serviceAccount []byte, dns01Nameservers []string, ambient bool, hostedZoneName string) (*clouddns.DNSProvider, error)
 	cloudFlare   func(email, apikey, apiToken string, dns01Nameservers []string) (*cloudflare.DNSProvider, error)
 	route53      func(accessKey, secretKey, hostedZoneID, region, role string, ambient bool, dns01Nameservers []string) (*route53.DNSProvider, error)
-	azureDNS     func(environment, clientID, clientSecret, subscriptionID, tenantID, resourceGroupName, hostedZoneName string, dns01Nameservers []string) (*azuredns.DNSProvider, error)
+	azureDNS     func(environment, clientID, clientSecret, subscriptionID, tenantID, resourceGroupName, hostedZoneName string, dns01Nameservers []string, ambient bool) (*azuredns.DNSProvider, error)
 	acmeDNS      func(host string, accountJson []byte, dns01Nameservers []string) (*acmedns.DNSProvider, error)
 	digitalOcean func(token string, dns01Nameservers []string) (*digitalocean.DNSProvider, error)
 }
@@ -80,16 +76,16 @@ type Solver struct {
 }
 
 // Present performs the work to configure DNS to resolve a DNS01 challenge.
-func (s *Solver) Present(ctx context.Context, issuer v1alpha2.GenericIssuer, ch *cmacme.Challenge) error {
-	log := logs.WithResource(logs.FromContext(ctx, "Present"), ch).WithValues("domain", ch.Spec.DNSName)
-	ctx = logs.NewContext(ctx, log)
+func (s *Solver) Present(ctx context.Context, issuer v1.GenericIssuer, ch *cmacme.Challenge) error {
+	log := logf.WithResource(logf.FromContext(ctx, "Present"), ch).WithValues("domain", ch.Spec.DNSName)
+	ctx = logf.NewContext(ctx, log)
 
 	webhookSolver, req, err := s.prepareChallengeRequest(issuer, ch)
 	if err != nil && err != errNotFound {
 		return err
 	}
 	if err == nil {
-		log.Info("presenting DNS01 challenge for domain")
+		log.V(logf.InfoLevel).Info("presenting DNS01 challenge for domain")
 		return webhookSolver.Present(req)
 	}
 
@@ -103,22 +99,21 @@ func (s *Solver) Present(ctx context.Context, issuer v1alpha2.GenericIssuer, ch 
 		return err
 	}
 
-	log.Info("presenting DNS01 challenge for domain")
+	log.V(logf.DebugLevel).Info("presenting DNS01 challenge for domain")
 
 	return slv.Present(ch.Spec.DNSName, fqdn, ch.Spec.Key)
 }
 
 // Check verifies that the DNS records for the ACME challenge have propagated.
-func (s *Solver) Check(ctx context.Context, issuer v1alpha2.GenericIssuer, ch *cmacme.Challenge) error {
-	log := logs.WithResource(logs.FromContext(ctx, "Check"), ch).WithValues("domain", ch.Spec.DNSName)
-	ctx = logs.NewContext(ctx, log)
+func (s *Solver) Check(ctx context.Context, issuer v1.GenericIssuer, ch *cmacme.Challenge) error {
+	log := logf.WithResource(logf.FromContext(ctx, "Check"), ch).WithValues("domain", ch.Spec.DNSName)
 
 	fqdn, err := util.DNS01LookupFQDN(ch.Spec.DNSName, false, s.DNS01Nameservers...)
 	if err != nil {
 		return err
 	}
 
-	log.Info("checking DNS propagation", "nameservers", s.Context.DNS01Nameservers)
+	log.V(logf.DebugLevel).Info("checking DNS propagation", "nameservers", s.Context.DNS01Nameservers)
 
 	ok, err := util.PreCheckDNS(fqdn, ch.Spec.Key, s.Context.DNS01Nameservers,
 		s.Context.DNS01CheckAuthoritative)
@@ -130,25 +125,25 @@ func (s *Solver) Check(ctx context.Context, issuer v1alpha2.GenericIssuer, ch *c
 	}
 
 	ttl := 60
-	log.Info("waiting DNS record TTL to allow the DNS01 record to propagate for domain", "ttl", ttl, "fqdn", fqdn)
+	log.V(logf.DebugLevel).Info("waiting DNS record TTL to allow the DNS01 record to propagate for domain", "ttl", ttl, "fqdn", fqdn)
 	time.Sleep(time.Second * time.Duration(ttl))
-	log.Info("ACME DNS01 validation record propagated", "fqdn", fqdn)
+	log.V(logf.DebugLevel).Info("ACME DNS01 validation record propagated", "fqdn", fqdn)
 
 	return nil
 }
 
 // CleanUp removes DNS records which are no longer needed after
 // certificate issuance.
-func (s *Solver) CleanUp(ctx context.Context, issuer v1alpha2.GenericIssuer, ch *cmacme.Challenge) error {
-	log := logs.WithResource(logs.FromContext(ctx, "CleanUp"), ch).WithValues("domain", ch.Spec.DNSName)
-	ctx = logs.NewContext(ctx, log)
+func (s *Solver) CleanUp(ctx context.Context, issuer v1.GenericIssuer, ch *cmacme.Challenge) error {
+	log := logf.WithResource(logf.FromContext(ctx, "CleanUp"), ch).WithValues("domain", ch.Spec.DNSName)
+	ctx = logf.NewContext(ctx, log)
 
 	webhookSolver, req, err := s.prepareChallengeRequest(issuer, ch)
 	if err != nil && err != errNotFound {
 		return err
 	}
 	if err == nil {
-		log.Info("cleaning up DNS01 challenge")
+		log.V(logf.DebugLevel).Info("cleaning up DNS01 challenge")
 		return webhookSolver.CleanUp(req)
 	}
 
@@ -173,21 +168,19 @@ func followCNAME(strategy cmacme.CNAMEStrategy) bool {
 }
 
 func extractChallengeSolverConfig(ch *cmacme.Challenge) (*cmacme.ACMEChallengeSolverDNS01, error) {
-	switch {
-	case ch.Spec.Solver != nil:
-		return ch.Spec.Solver.DNS01, nil
-	default:
+	if ch.Spec.Solver.DNS01 == nil {
 		return nil, fmt.Errorf("no dns01 challenge solver configuration found")
 	}
+
+	return ch.Spec.Solver.DNS01, nil
 }
 
 // solverForChallenge returns a Solver for the given providerName.
 // The providerName is the name of an ACME DNS-01 challenge provider as
 // specified on the Issuer resource for the Solver.
-func (s *Solver) solverForChallenge(ctx context.Context, issuer v1alpha2.GenericIssuer, ch *cmacme.Challenge) (solver, *cmacme.ACMEChallengeSolverDNS01, error) {
-	log := logs.FromContext(ctx, "solverForChallenge")
-	dbg := log.V(logs.DebugLevel)
-	ctx = logs.NewContext(ctx, log)
+func (s *Solver) solverForChallenge(ctx context.Context, issuer v1.GenericIssuer, ch *cmacme.Challenge) (solver, *cmacme.ACMEChallengeSolverDNS01, error) {
+	log := logf.FromContext(ctx, "solverForChallenge")
+	dbg := log.V(logf.DebugLevel)
 
 	resourceNamespace := s.ResourceNamespace(issuer)
 	canUseAmbientCredentials := s.CanUseAmbientCredentials(issuer)
@@ -241,12 +234,12 @@ func (s *Solver) solverForChallenge(ctx context.Context, issuer v1alpha2.Generic
 			saKey := providerConfig.CloudDNS.ServiceAccount.Key
 			keyData = saSecret.Data[saKey]
 			if len(keyData) == 0 {
-				return nil, nil, fmt.Errorf("specfied key %q not found in secret %s/%s", saKey, saSecret.Namespace, saSecret.Name)
+				return nil, nil, fmt.Errorf("specified key %q not found in secret %s/%s", saKey, saSecret.Namespace, saSecret.Name)
 			}
 		}
 
 		// attempt to construct the cloud dns provider
-		impl, err = s.dnsProviderConstructors.cloudDNS(providerConfig.CloudDNS.Project, keyData, s.DNS01Nameservers, s.CanUseAmbientCredentials(issuer))
+		impl, err = s.dnsProviderConstructors.cloudDNS(providerConfig.CloudDNS.Project, keyData, s.DNS01Nameservers, s.CanUseAmbientCredentials(issuer), providerConfig.CloudDNS.HostedZoneName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error instantiating google clouddns challenge solver: %s", err)
 		}
@@ -272,7 +265,7 @@ func (s *Solver) solverForChallenge(ctx context.Context, issuer v1alpha2.Generic
 
 		keyData, ok := saSecret.Data[saSecretKey]
 		if !ok {
-			return nil, nil, fmt.Errorf("specfied key %q not found in secret %s/%s", saSecretKey, saSecret.Namespace, saSecret.Name)
+			return nil, nil, fmt.Errorf("specified key %q not found in secret %s/%s", saSecretKey, saSecret.Namespace, saSecret.Name)
 		}
 
 		var apiKey, apiToken string
@@ -330,25 +323,31 @@ func (s *Solver) solverForChallenge(ctx context.Context, issuer v1alpha2.Generic
 		}
 	case providerConfig.AzureDNS != nil:
 		dbg.Info("preparing to create AzureDNS provider")
-		clientSecret, err := s.secretLister.Secrets(resourceNamespace).Get(providerConfig.AzureDNS.ClientSecret.Name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error getting azuredns client secret: %s", err)
-		}
+		secret := ""
+		// if ClientID is empty, then we try to use MSI (azure metadata API for credentials)
+		// if ClientID is empty we don't even try to get the ClientSecret because it would not be used
+		if providerConfig.AzureDNS.ClientID != "" {
+			clientSecret, err := s.secretLister.Secrets(resourceNamespace).Get(providerConfig.AzureDNS.ClientSecret.Name)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error getting azuredns client secret: %s", err)
+			}
 
-		clientSecretBytes, ok := clientSecret.Data[providerConfig.AzureDNS.ClientSecret.Key]
-		if !ok {
-			return nil, nil, fmt.Errorf("error getting azure dns client secret: key '%s' not found in secret", providerConfig.AzureDNS.ClientSecret.Key)
+			clientSecretBytes, ok := clientSecret.Data[providerConfig.AzureDNS.ClientSecret.Key]
+			if !ok {
+				return nil, nil, fmt.Errorf("error getting azure dns client secret: key '%s' not found in secret", providerConfig.AzureDNS.ClientSecret.Key)
+			}
+			secret = string(clientSecretBytes)
 		}
-
 		impl, err = s.dnsProviderConstructors.azureDNS(
 			string(providerConfig.AzureDNS.Environment),
 			providerConfig.AzureDNS.ClientID,
-			string(clientSecretBytes),
+			secret,
 			providerConfig.AzureDNS.SubscriptionID,
 			providerConfig.AzureDNS.TenantID,
 			providerConfig.AzureDNS.ResourceGroupName,
 			providerConfig.AzureDNS.HostedZoneName,
 			s.DNS01Nameservers,
+			canUseAmbientCredentials,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error instantiating azuredns challenge solver: %s", err)
@@ -380,7 +379,7 @@ func (s *Solver) solverForChallenge(ctx context.Context, issuer v1alpha2.Generic
 	return impl, providerConfig, nil
 }
 
-func (s *Solver) prepareChallengeRequest(issuer v1alpha2.GenericIssuer, ch *cmacme.Challenge) (webhook.Solver, *whapi.ChallengeRequest, error) {
+func (s *Solver) prepareChallengeRequest(issuer v1.GenericIssuer, ch *cmacme.Challenge) (webhook.Solver, *whapi.ChallengeRequest, error) {
 	dns01Config, err := extractChallengeSolverConfig(ch)
 	if err != nil {
 		return nil, nil, err
@@ -466,7 +465,7 @@ func NewSolver(ctx *controller.Context) (*Solver, error) {
 		for _, s := range webhookSolvers {
 			err := s.Initialize(ctx.RESTConfig, ctx.StopCh)
 			if err != nil {
-				return nil, fmt.Errorf("error intializing DNS provider %q: %v", s.Name(), err)
+				return nil, fmt.Errorf("error initializing DNS provider %q: %v", s.Name(), err)
 			}
 			initialized[s.Name()] = s
 		}

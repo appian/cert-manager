@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,18 +19,20 @@ package validation
 import (
 	"fmt"
 	"net"
+	"net/mail"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/jetstack/cert-manager/pkg/api/util"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
-	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
+	internalcmapi "github.com/jetstack/cert-manager/pkg/internal/apis/certmanager"
+	cmmeta "github.com/jetstack/cert-manager/pkg/internal/apis/meta"
 )
 
-// Validation functions for cert-manager v1alpha2 Certificate types
+// Validation functions for cert-manager Certificate types
 
-func ValidateCertificateSpec(crt *v1alpha2.CertificateSpec, fldPath *field.Path) field.ErrorList {
+func ValidateCertificateSpec(crt *internalcmapi.CertificateSpec, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
 	if crt.SecretName == "" {
 		el = append(el, field.Required(fldPath.Child("secretName"), "must be specified"))
@@ -38,9 +40,8 @@ func ValidateCertificateSpec(crt *v1alpha2.CertificateSpec, fldPath *field.Path)
 
 	el = append(el, validateIssuerRef(crt.IssuerRef, fldPath)...)
 
-	if len(crt.CommonName) == 0 && len(crt.DNSNames) == 0 && len(crt.URISANs) == 0 {
-		el = append(el, field.Required(fldPath.Child("commonName", "dnsNames", "uriSANs"),
-			"at least one of commonName, dnsNames, or uriSANs must be set"))
+	if len(crt.CommonName) == 0 && len(crt.DNSNames) == 0 && len(crt.URISANs) == 0 && len(crt.EmailSANs) == 0 && len(crt.IPAddresses) == 0 {
+		el = append(el, field.Invalid(fldPath, "", "at least one of commonName, dnsNames, uris ipAddresses, or emailAddresses must be set"))
 	}
 
 	// if a common name has been specified, ensure it is no longer than 64 chars
@@ -51,21 +52,24 @@ func ValidateCertificateSpec(crt *v1alpha2.CertificateSpec, fldPath *field.Path)
 	if len(crt.IPAddresses) > 0 {
 		el = append(el, validateIPAddresses(crt, fldPath)...)
 	}
-	if crt.KeySize < 0 {
-		el = append(el, field.Invalid(fldPath.Child("keySize"), crt.KeySize, "cannot be less than zero"))
+
+	if len(crt.EmailSANs) > 0 {
+		el = append(el, validateEmailAddresses(crt, fldPath)...)
 	}
-	switch crt.KeyAlgorithm {
-	case v1alpha2.KeyAlgorithm(""):
-	case v1alpha2.RSAKeyAlgorithm:
-		if crt.KeySize > 0 && (crt.KeySize < 2048 || crt.KeySize > 8192) {
-			el = append(el, field.Invalid(fldPath.Child("keySize"), crt.KeySize, "must be between 2048 & 8192 for rsa keyAlgorithm"))
+
+	if crt.PrivateKey != nil {
+		switch crt.PrivateKey.Algorithm {
+		case "", internalcmapi.RSAKeyAlgorithm:
+			if crt.PrivateKey.Size > 0 && (crt.PrivateKey.Size < 2048 || crt.PrivateKey.Size > 8192) {
+				el = append(el, field.Invalid(fldPath.Child("privateKey", "size"), crt.PrivateKey.Size, "must be between 2048 & 8192 for rsa keyAlgorithm"))
+			}
+		case internalcmapi.ECDSAKeyAlgorithm:
+			if crt.PrivateKey.Size > 0 && crt.PrivateKey.Size != 256 && crt.PrivateKey.Size != 384 && crt.PrivateKey.Size != 521 {
+				el = append(el, field.NotSupported(fldPath.Child("privateKey", "size"), crt.PrivateKey.Size, []string{"256", "384", "521"}))
+			}
+		default:
+			el = append(el, field.Invalid(fldPath.Child("privateKey", "algorithm"), crt.PrivateKey.Algorithm, "must be either empty or one of rsa or ecdsa"))
 		}
-	case v1alpha2.ECDSAKeyAlgorithm:
-		if crt.KeySize > 0 && crt.KeySize != 256 && crt.KeySize != 384 && crt.KeySize != 521 {
-			el = append(el, field.NotSupported(fldPath.Child("keySize"), crt.KeySize, []string{"256", "384", "521"}))
-		}
-	default:
-		el = append(el, field.Invalid(fldPath.Child("keyAlgorithm"), crt.KeyAlgorithm, "must be either empty or one of rsa or ecdsa"))
 	}
 
 	if crt.Duration != nil || crt.RenewBefore != nil {
@@ -74,16 +78,17 @@ func ValidateCertificateSpec(crt *v1alpha2.CertificateSpec, fldPath *field.Path)
 	if len(crt.Usages) > 0 {
 		el = append(el, validateUsages(crt, fldPath)...)
 	}
-	switch crt.KeyEncoding {
-	case v1alpha2.KeyEncoding(""), v1alpha2.PKCS1, v1alpha2.PKCS8:
-	default:
-		el = append(el, field.Invalid(fldPath.Child("keyEncoding"), crt.KeyEncoding, "must be either empty or one of pkcs1 or pkcs8"))
-	}
 	return el
 }
 
 func ValidateCertificate(obj runtime.Object) field.ErrorList {
-	crt := obj.(*v1alpha2.Certificate)
+	crt := obj.(*internalcmapi.Certificate)
+	allErrs := ValidateCertificateSpec(&crt.Spec, field.NewPath("spec"))
+	return allErrs
+}
+
+func ValidateUpdateCertificate(oldObj, obj runtime.Object) field.ErrorList {
+	crt := obj.(*internalcmapi.Certificate)
 	allErrs := ValidateCertificateSpec(&crt.Spec, field.NewPath("spec"))
 	return allErrs
 }
@@ -95,7 +100,7 @@ func validateIssuerRef(issuerRef cmmeta.ObjectReference, fldPath *field.Path) fi
 	if issuerRef.Name == "" {
 		el = append(el, field.Required(issuerRefPath.Child("name"), "must be specified"))
 	}
-	if issuerRef.Group == "" || issuerRef.Group == v1alpha2.SchemeGroupVersion.Group {
+	if issuerRef.Group == "" || issuerRef.Group == internalcmapi.SchemeGroupVersion.Group {
 		switch issuerRef.Kind {
 		case "":
 		case "Issuer", "ClusterIssuer":
@@ -106,7 +111,7 @@ func validateIssuerRef(issuerRef cmmeta.ObjectReference, fldPath *field.Path) fi
 	return el
 }
 
-func validateIPAddresses(a *v1alpha2.CertificateSpec, fldPath *field.Path) field.ErrorList {
+func validateIPAddresses(a *internalcmapi.CertificateSpec, fldPath *field.Path) field.ErrorList {
 	if len(a.IPAddresses) <= 0 {
 		return nil
 	}
@@ -120,11 +125,29 @@ func validateIPAddresses(a *v1alpha2.CertificateSpec, fldPath *field.Path) field
 	return el
 }
 
-func validateUsages(a *v1alpha2.CertificateSpec, fldPath *field.Path) field.ErrorList {
+func validateEmailAddresses(a *internalcmapi.CertificateSpec, fldPath *field.Path) field.ErrorList {
+	if len(a.EmailSANs) <= 0 {
+		return nil
+	}
+	el := field.ErrorList{}
+	for i, d := range a.EmailSANs {
+		e, err := mail.ParseAddress(d)
+		if err != nil {
+			el = append(el, field.Invalid(fldPath.Child("emailAddresses").Index(i), d, fmt.Sprintf("invalid email address: %s", err)))
+		} else if e.Address != d {
+			// Go accepts email names as per RFC 5322 (name <email>)
+			// This checks if the supplied value only contains the email address and nothing else
+			el = append(el, field.Invalid(fldPath.Child("emailAddresses").Index(i), d, "invalid email address: make sure the supplied value only contains the email address itself"))
+		}
+	}
+	return el
+}
+
+func validateUsages(a *internalcmapi.CertificateSpec, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
 	for i, u := range a.Usages {
-		_, kok := util.KeyUsageType(u)
-		_, ekok := util.ExtKeyUsageType(u)
+		_, kok := util.KeyUsageType(cmapi.KeyUsage(u))
+		_, ekok := util.ExtKeyUsageType(cmapi.KeyUsage(u))
 		if !kok && !ekok {
 			el = append(el, field.Invalid(fldPath.Child("usages").Index(i), u, "unknown keyusage"))
 		}
@@ -132,19 +155,19 @@ func validateUsages(a *v1alpha2.CertificateSpec, fldPath *field.Path) field.Erro
 	return el
 }
 
-func ValidateDuration(crt *v1alpha2.CertificateSpec, fldPath *field.Path) field.ErrorList {
+func ValidateDuration(crt *internalcmapi.CertificateSpec, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
 
 	duration := util.DefaultCertDuration(crt.Duration)
-	renewBefore := v1alpha2.DefaultRenewBefore
+	renewBefore := cmapi.DefaultRenewBefore
 	if crt.RenewBefore != nil {
 		renewBefore = crt.RenewBefore.Duration
 	}
-	if duration < v1alpha2.MinimumCertificateDuration {
-		el = append(el, field.Invalid(fldPath.Child("duration"), duration, fmt.Sprintf("certificate duration must be greater than %s", v1alpha2.MinimumCertificateDuration)))
+	if duration < cmapi.MinimumCertificateDuration {
+		el = append(el, field.Invalid(fldPath.Child("duration"), duration, fmt.Sprintf("certificate duration must be greater than %s", cmapi.MinimumCertificateDuration)))
 	}
-	if renewBefore < v1alpha2.MinimumRenewBefore {
-		el = append(el, field.Invalid(fldPath.Child("renewBefore"), renewBefore, fmt.Sprintf("certificate renewBefore must be greater than %s", v1alpha2.MinimumRenewBefore)))
+	if renewBefore < cmapi.MinimumRenewBefore {
+		el = append(el, field.Invalid(fldPath.Child("renewBefore"), renewBefore, fmt.Sprintf("certificate renewBefore must be greater than %s", cmapi.MinimumRenewBefore)))
 	}
 	if duration <= renewBefore {
 		el = append(el, field.Invalid(fldPath.Child("renewBefore"), renewBefore, fmt.Sprintf("certificate duration %s must be greater than renewBefore %s", duration, renewBefore)))

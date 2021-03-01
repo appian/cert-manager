@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests"
 	crutil "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/util"
@@ -77,10 +77,10 @@ func (s *SelfSigned) Sign(ctx context.Context, cr *cmapi.CertificateRequest, iss
 
 	resourceNamespace := s.issuerOptions.ResourceNamespace(issuerObj)
 
-	secretName, ok := cr.ObjectMeta.Annotations[cmapi.CRPrivateKeyAnnotationKey]
+	secretName, ok := cr.ObjectMeta.Annotations[cmapi.CertificateRequestPrivateKeyAnnotationKey]
 	if !ok || secretName == "" {
 		message := fmt.Sprintf("Annotation %q missing or reference empty",
-			cmapi.CRPrivateKeyAnnotationKey)
+			cmapi.CertificateRequestPrivateKeyAnnotationKey)
 		err := errors.New("secret name missing")
 
 		s.reporter.Failed(cr, err, "MissingAnnotation", message)
@@ -101,7 +101,7 @@ func (s *SelfSigned) Sign(ctx context.Context, cr *cmapi.CertificateRequest, iss
 
 	if cmerrors.IsInvalidData(err) {
 		message := fmt.Sprintf("Failed to get key %q referenced in annotation %q",
-			secretName, cmapi.CRPrivateKeyAnnotationKey)
+			secretName, cmapi.CertificateRequestPrivateKeyAnnotationKey)
 
 		s.reporter.Pending(cr, err, "ErrorParsingKey", message)
 		log.Error(err, message)
@@ -124,6 +124,8 @@ func (s *SelfSigned) Sign(ctx context.Context, cr *cmapi.CertificateRequest, iss
 		log.Error(err, message)
 		return nil, nil
 	}
+
+	template.CRLDistributionPoints = issuerObj.GetSpec().SelfSigned.CRLDistributionPoints
 
 	// extract the public component of the key
 	publickey, err := pki.PublicKeyForPrivateKey(privatekey)
@@ -157,7 +159,7 @@ func (s *SelfSigned) Sign(ctx context.Context, cr *cmapi.CertificateRequest, iss
 		return nil, nil
 	}
 
-	log.Info("self signed certificate issued")
+	log.V(logf.DebugLevel).Info("self signed certificate issued")
 
 	// We set the CA to the returned certificate here since this is self signed.
 	return &issuer.IssueResponse{

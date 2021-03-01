@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,59 +22,58 @@ import (
 	cmmeta "github.com/jetstack/cert-manager/pkg/internal/apis/meta"
 )
 
-// TODO: these types should be moved into their own API group once we have a loose
-// coupling between ACME Issuers and their solver configurations (see: Solver proposal)
-
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Order is a type to represent an Order with an ACME server
 type Order struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
-	Spec   OrderSpec   `json:"spec,omitempty"`
-	Status OrderStatus `json:"status,omitempty"`
+	Spec   OrderSpec
+	Status OrderStatus
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // OrderList is a list of Orders
 type OrderList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ListMeta
 
-	Items []Order `json:"items"`
+	Items []Order
 }
 
 type OrderSpec struct {
 	// Certificate signing request bytes in DER encoding.
 	// This will be used when finalizing the order.
 	// This field must be set on the order.
-	CSR []byte `json:"csr"`
+	Request []byte
 
 	// IssuerRef references a properly configured ACME-type Issuer which should
 	// be used to create this Order.
 	// If the Issuer does not exist, processing will be retried.
 	// If the Issuer is not an 'ACME' Issuer, an error will be returned and the
 	// Order will be marked as failed.
-	IssuerRef cmmeta.ObjectReference `json:"issuerRef"`
+	IssuerRef cmmeta.ObjectReference
 
 	// CommonName is the common name as specified on the DER encoded CSR.
-	// If CommonName is not specified, the first DNSName specified will be used
-	// as the CommonName.
-	// At least one of CommonName or a DNSNames must be set.
+	// If specified, this value must also be present in `dnsNames` or `ipAddresses`.
 	// This field must match the corresponding field on the DER encoded CSR.
-	// +optional
-	CommonName string `json:"commonName,omitempty"`
+	CommonName string
 
 	// DNSNames is a list of DNS names that should be included as part of the Order
 	// validation process.
-	// If CommonName is not specified, the first DNSName specified will be used
-	// as the CommonName.
-	// At least one of CommonName or a DNSNames must be set.
 	// This field must match the corresponding field on the DER encoded CSR.
-	// +optional
-	DNSNames []string `json:"dnsNames,omitempty"`
+	DNSNames []string
+
+	// IPAddresses is a list of IP addresses that should be included as part of the Order
+	// validation process.
+	// This field must match the corresponding field on the DER encoded CSR.
+	IPAddresses []string
+
+	// Duration is the duration for the not after date for the requested certificate.
+	// this is set on order creation as pe the ACME spec.
+	Duration *metav1.Duration
 }
 
 type OrderStatus struct {
@@ -82,41 +81,34 @@ type OrderStatus struct {
 	// This will initially be empty when the resource is first created.
 	// The Order controller will populate this field when the Order is first processed.
 	// This field will be immutable after it is initially set.
-	// +optional
-	URL string `json:"url,omitempty"`
+	URL string
 
 	// FinalizeURL of the Order.
 	// This is used to obtain certificates for this order once it has been completed.
-	// +optional
-	FinalizeURL string `json:"finalizeURL,omitempty"`
+	FinalizeURL string
 
 	// Certificate is a copy of the PEM encoded certificate for this Order.
 	// This field will be populated after the order has been successfully
 	// finalized with the ACME server, and the order has transitioned to the
 	// 'valid' state.
-	// +optional
-	Certificate []byte `json:"certificate,omitempty"`
+	Certificate []byte
 
 	// State contains the current state of this Order resource.
 	// States 'success' and 'expired' are 'final'
-	// +optional
-	State State `json:"state,omitempty"`
+	State State
 
 	// Reason optionally provides more information about a why the order is in
 	// the current state.
-	// +optional
-	Reason string `json:"reason,omitempty"`
+	Reason string
 
 	// Authorizations contains data returned from the ACME server on what
-	// authoriations must be completed in order to validate the DNS names
+	// authorizations must be completed in order to validate the DNS names
 	// specified on the Order.
-	// +optional
-	Authorizations []ACMEAuthorization `json:"authorizations,omitempty"`
+	Authorizations []ACMEAuthorization
 
 	// FailureTime stores the time that this order failed.
 	// This is used to influence garbage collection and back-off.
-	// +optional
-	FailureTime *metav1.Time `json:"failureTime,omitempty"`
+	FailureTime *metav1.Time
 }
 
 // ACMEAuthorization contains data returned from the ACME server on an
@@ -124,26 +116,34 @@ type OrderStatus struct {
 // Order resource.
 type ACMEAuthorization struct {
 	// URL is the URL of the Authorization that must be completed
-	URL string `json:"url"`
+	URL string
 
 	// Identifier is the DNS name to be validated as part of this authorization
-	// +optional
-	Identifier string `json:"identifier,omitempty"`
+	Identifier string
 
 	// Wildcard will be true if this authorization is for a wildcard DNS name.
 	// If this is true, the identifier will be the *non-wildcard* version of
 	// the DNS name.
 	// For example, if '*.example.com' is the DNS name being validated, this
 	// field will be 'true' and the 'identifier' field will be 'example.com'.
+	Wildcard *bool
+
+	// InitialState is the initial state of the ACME authorization when first
+	// fetched from the ACME server.
+	// If an Authorization is already 'valid', the Order controller will not
+	// create a Challenge resource for the authorization. This will occur when
+	// working with an ACME server that enables 'authz reuse' (such as Let's
+	// Encrypt's production endpoint).
+	// If not set and 'identifier' is set, the state is assumed to be pending
+	// and a Challenge will be created.
 	// +optional
-	Wildcard *bool `json:"wildcard,omitempty"`
+	InitialState State
 
 	// Challenges specifies the challenge types offered by the ACME server.
 	// One of these challenge types will be selected when validating the DNS
 	// name and an appropriate Challenge resource will be created to perform
 	// the ACME challenge process.
-	// +optional
-	Challenges []ACMEChallenge `json:"challenges,omitempty"`
+	Challenges []ACMEChallenge
 }
 
 // Challenge specifies a challenge offered by the ACME server for an Order.
@@ -152,26 +152,19 @@ type ACMEAuthorization struct {
 type ACMEChallenge struct {
 	// URL is the URL of this challenge. It can be used to retrieve additional
 	// metadata about the Challenge from the ACME server.
-	URL string `json:"url"`
+	URL string
 
 	// Token is the token that must be presented for this challenge.
 	// This is used to compute the 'key' that must also be presented.
-	Token string `json:"token"`
+	Token string
 
-	// Type is the type of challenge being offered, e.g. http-01, dns-01
-	Type ACMEChallengeType `json:"type"`
+	// Type is the type of challenge being offered, e.g. 'http-01', 'dns-01',
+	// 'tls-sni-01', etc.
+	// This is the raw value retrieved from the ACME server.
+	// Only 'http-01' and 'dns-01' are supported by cert-manager, other values
+	// will be ignored.
+	Type string
 }
-
-// ACMEChallengeType denotes a type of ACME challenge
-type ACMEChallengeType string
-
-const (
-	// ACMEChallengeTypeHTTP01 denotes a Challenge is of type http-01
-	ACMEChallengeTypeHTTP01 ACMEChallengeType = "http-01"
-
-	// ACMEChallengeTypeDNS01 denotes a Challenge is of type dns-01
-	ACMEChallengeTypeDNS01 ACMEChallengeType = "dns-01"
-)
 
 // State represents the state of an ACME resource, such as an Order.
 // The possible options here map to the corresponding values in the
@@ -179,7 +172,6 @@ const (
 // Full details of these values can be found here: https://tools.ietf.org/html/draft-ietf-acme-acme-15#section-7.1.6
 // Clients utilising this type must also gracefully handle unknown
 // values, as the contents of this enumeration may be added to over time.
-// +kubebuilder:validation:Enum=valid;ready;pending;processing;invalid;expired;errored
 type State string
 
 const (

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -155,7 +155,7 @@ func mockTransport(t *testing.T, akamai *DNSProvider, domain, data string, respo
 
 		if req.Method == http.MethodPost {
 			if req.Header.Get("Content-Type") != "application/json" {
-				t.Fatalf("usupported Content Type: %v", req.Header.Get("Content-Type"))
+				t.Fatalf("unsupported Content Type: %v", req.Header.Get("Content-Type"))
 			}
 
 			var err error

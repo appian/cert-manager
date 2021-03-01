@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
-	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	cmacme "github.com/jetstack/cert-manager/pkg/internal/apis/acme"
+	cmapi "github.com/jetstack/cert-manager/pkg/internal/apis/certmanager"
+	cmmeta "github.com/jetstack/cert-manager/pkg/internal/apis/meta"
 )
 
 var (
@@ -48,8 +50,8 @@ var (
 		Server:     "valid-server",
 		PrivateKey: validSecretKeyRef,
 	}
-	validVaultIssuer = v1alpha2.VaultIssuer{
-		Auth: v1alpha2.VaultAuth{
+	validVaultIssuer = cmapi.VaultIssuer{
+		Auth: cmapi.VaultAuth{
 			TokenSecretRef: &validSecretKeyRef,
 		},
 		Server: "something",
@@ -60,21 +62,21 @@ var (
 func TestValidateVaultIssuerConfig(t *testing.T) {
 	fldPath := field.NewPath("")
 	scenarios := map[string]struct {
-		spec *v1alpha2.VaultIssuer
+		spec *cmapi.VaultIssuer
 		errs []*field.Error
 	}{
 		"valid vault issuer": {
 			spec: &validVaultIssuer,
 		},
 		"vault issuer with missing fields": {
-			spec: &v1alpha2.VaultIssuer{},
+			spec: &cmapi.VaultIssuer{},
 			errs: []*field.Error{
 				field.Required(fldPath.Child("server"), ""),
 				field.Required(fldPath.Child("path"), ""),
 			},
 		},
 		"vault issuer with invalid fields": {
-			spec: &v1alpha2.VaultIssuer{
+			spec: &cmapi.VaultIssuer{
 				Server:   "something",
 				Path:     "a/b/c",
 				CABundle: []byte("invalid"),
@@ -296,60 +298,64 @@ func TestValidateACMEIssuerConfig(t *testing.T) {
 func TestValidateIssuerSpec(t *testing.T) {
 	fldPath := field.NewPath("")
 	scenarios := map[string]struct {
-		spec *v1alpha2.IssuerSpec
-		errs []*field.Error
+		spec *cmapi.IssuerSpec
+		errs field.ErrorList
 	}{
 		"valid ca issuer": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
-					CA: &v1alpha2.CAIssuer{
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					CA: &cmapi.CAIssuer{
 						SecretName: "valid",
 					},
 				},
 			},
+			errs: []*field.Error{},
 		},
 		"ca issuer without secret name specified": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
-					CA: &v1alpha2.CAIssuer{},
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					CA: &cmapi.CAIssuer{},
 				},
 			},
 			errs: []*field.Error{field.Required(fldPath.Child("ca", "secretName"), "")},
 		},
 		"valid self signed issuer": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
-					SelfSigned: &v1alpha2.SelfSignedIssuer{},
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					SelfSigned: &cmapi.SelfSignedIssuer{},
 				},
 			},
+			errs: []*field.Error{},
 		},
 		"valid acme issuer": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
 					ACME: &validACMEIssuer,
 				},
 			},
+			errs: []*field.Error{},
 		},
 		"valid vault issuer": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
 					Vault: &validVaultIssuer,
 				},
 			},
+			errs: []*field.Error{},
 		},
 		"missing issuer config": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{},
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{},
 			},
 			errs: []*field.Error{
 				field.Required(fldPath, "at least one issuer must be configured"),
 			},
 		},
 		"multiple issuers configured": {
-			spec: &v1alpha2.IssuerSpec{
-				IssuerConfig: v1alpha2.IssuerConfig{
-					SelfSigned: &v1alpha2.SelfSignedIssuer{},
-					CA: &v1alpha2.CAIssuer{
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					SelfSigned: &cmapi.SelfSignedIssuer{},
+					CA: &cmapi.CAIssuer{
 						SecretName: "valid",
 					},
 				},
@@ -358,20 +364,35 @@ func TestValidateIssuerSpec(t *testing.T) {
 				field.Forbidden(fldPath.Child("selfSigned"), "may not specify more than one issuer type"),
 			},
 		},
+		"valid ocsp url": {
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					CA: &cmapi.CAIssuer{
+						SecretName:  "valid",
+						OCSPServers: []string{"http://ocsp.int-x3.letsencrypt.org"},
+					},
+				},
+			},
+			errs: []*field.Error{},
+		},
+		"invalid ocsp url": {
+			spec: &cmapi.IssuerSpec{
+				IssuerConfig: cmapi.IssuerConfig{
+					CA: &cmapi.CAIssuer{
+						SecretName:  "valid",
+						OCSPServers: []string{""},
+					},
+				},
+			},
+			errs: []*field.Error{
+				field.Invalid(fldPath.Child("ca", "ocspServer").Index(0), "", `must be a valid URL, e.g., http://ocsp.int-x3.letsencrypt.org`),
+			},
+		},
 	}
 	for n, s := range scenarios {
 		t.Run(n, func(t *testing.T) {
-			errs := ValidateIssuerSpec(s.spec, fldPath)
-			if len(errs) != len(s.errs) {
-				t.Errorf("Expected %v but got %v", s.errs, errs)
-				return
-			}
-			for i, e := range errs {
-				expectedErr := s.errs[i]
-				if !reflect.DeepEqual(e, expectedErr) {
-					t.Errorf("Expected %v but got %v", expectedErr, e)
-				}
-			}
+			gotErrs := ValidateIssuerSpec(s.spec, fldPath)
+			assert.Equal(t, s.errs, gotErrs)
 		})
 	}
 }
@@ -477,7 +498,7 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				},
 			},
 			errs: []*field.Error{
-				field.Required(fldPath.Child("clouddns", "project"), ""),
+				field.Required(fldPath.Child("cloudDNS", "project"), ""),
 			},
 		},
 		"missing clouddns service account key": {
@@ -491,7 +512,7 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				},
 			},
 			errs: []*field.Error{
-				field.Required(fldPath.Child("clouddns", "serviceAccountSecretRef", "key"), "secret key is required"),
+				field.Required(fldPath.Child("cloudDNS", "serviceAccountSecretRef", "key"), "secret key is required"),
 			},
 		},
 		"missing clouddns service account name": {
@@ -505,7 +526,7 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				},
 			},
 			errs: []*field.Error{
-				field.Required(fldPath.Child("clouddns", "serviceAccountSecretRef", "name"), "secret name is required"),
+				field.Required(fldPath.Child("cloudDNS", "serviceAccountSecretRef", "name"), "secret name is required"),
 			},
 		},
 		"clouddns serviceAccount field not set should be allowed for ambient auth": {
@@ -590,12 +611,8 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{},
 			},
 			errs: []*field.Error{
-				field.Required(fldPath.Child("azuredns", "clientSecretSecretRef", "name"), "secret name is required"),
-				field.Required(fldPath.Child("azuredns", "clientSecretSecretRef", "key"), "secret key is required"),
-				field.Required(fldPath.Child("azuredns", "clientID"), ""),
-				field.Required(fldPath.Child("azuredns", "subscriptionID"), ""),
-				field.Required(fldPath.Child("azuredns", "tenantID"), ""),
-				field.Required(fldPath.Child("azuredns", "resourceGroupName"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
 			},
 		},
 		"invalid azuredns environment": {
@@ -605,14 +622,137 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				},
 			},
 			errs: []*field.Error{
-				field.Required(fldPath.Child("azuredns", "clientSecretSecretRef", "name"), "secret name is required"),
-				field.Required(fldPath.Child("azuredns", "clientSecretSecretRef", "key"), "secret key is required"),
-				field.Required(fldPath.Child("azuredns", "clientID"), ""),
-				field.Required(fldPath.Child("azuredns", "subscriptionID"), ""),
-				field.Required(fldPath.Child("azuredns", "tenantID"), ""),
-				field.Required(fldPath.Child("azuredns", "resourceGroupName"), ""),
-				field.Invalid(fldPath.Child("azuredns", "environment"), cmacme.AzureDNSEnvironment("an env"),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+				field.Invalid(fldPath.Child("azureDNS", "environment"), cmacme.AzureDNSEnvironment("an env"),
 					"must be either empty or one of AzurePublicCloud, AzureChinaCloud, AzureGermanCloud or AzureUSGovernmentCloud"),
+			},
+		},
+		"invalid azuredns missing clientSecret and tenantID": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					ClientID: "some-client-id",
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef"), ""),
+				field.Required(fldPath.Child("azureDNS", "tenantID"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns missing clientID and tenantID": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					ClientSecret: &cmmeta.SecretKeySelector{
+						Key: "some-key",
+						LocalObjectReference: cmmeta.LocalObjectReference{
+							Name: "some-secret-name",
+						},
+					},
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientID"), ""),
+				field.Required(fldPath.Child("azureDNS", "tenantID"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns missing clientID and clientSecret": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					TenantID: "some-tenant-id",
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientID"), ""),
+				field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns missing clientID": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					ClientSecret: &cmmeta.SecretKeySelector{
+						Key: "some-key",
+						LocalObjectReference: cmmeta.LocalObjectReference{
+							Name: "some-secret-name",
+						},
+					},
+					TenantID: "some-tenant-id",
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientID"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns missing clientSecret": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					TenantID: "some-tenant-id",
+					ClientID: "some-client-id",
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns clientSecret missing key": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					TenantID: "some-tenant-id",
+					ClientID: "some-client-id",
+					ClientSecret: &cmmeta.SecretKeySelector{
+						LocalObjectReference: cmmeta.LocalObjectReference{
+							Name: "some-secret-name",
+						},
+					},
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef", "key"), "secret key is required"),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns clientSecret missing secret name": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					TenantID: "some-tenant-id",
+					ClientID: "some-client-id",
+					ClientSecret: &cmmeta.SecretKeySelector{
+						Key: "some-key",
+					},
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef", "name"), "secret name is required"),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
+			},
+		},
+		"invalid azuredns missing tenantID": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				AzureDNS: &cmacme.ACMEIssuerDNS01ProviderAzureDNS{
+					ClientID: "some-client-id",
+					ClientSecret: &cmmeta.SecretKeySelector{
+						Key: "some-key",
+						LocalObjectReference: cmmeta.LocalObjectReference{
+							Name: "some-secret-name",
+						},
+					},
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("azureDNS", "tenantID"), ""),
+				field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""),
+				field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""),
 			},
 		},
 		"missing akamai config": {
@@ -640,15 +780,7 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 			},
 			errs: []*field.Error{},
 		},
-		"valid rfc2136 config": {
-			cfg: &cmacme.ACMEChallengeSolverDNS01{
-				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
-					Nameserver: "127.0.0.1",
-				},
-			},
-			errs: []*field.Error{},
-		},
-		"missing rfc2136 required field": {
+		"rfc2136 provider with missing nameserver": {
 			cfg: &cmacme.ACMEChallengeSolverDNS01{
 				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{},
 			},
@@ -656,14 +788,66 @@ func TestValidateACMEIssuerDNS01Config(t *testing.T) {
 				field.Required(fldPath.Child("rfc2136", "nameserver"), ""),
 			},
 		},
-		"rfc2136 provider invalid nameserver": {
+		"rfc2136 provider with IPv4 nameserver": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: "127.0.0.1",
+				},
+			},
+			errs: []*field.Error{},
+		},
+		"rfc2136 provider with unenclosed IPv6 nameserver": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: "2001:db8::1",
+				},
+			},
+			errs: []*field.Error{
+				field.Invalid(fldPath.Child("rfc2136", "nameserver"), "2001:db8::1", "nameserver must be set in the form host:port where host is an IPv4 address, an enclosed IPv6 address or a hostname and port is an optional port number."),
+			},
+		},
+		"rfc2136 provider with empty IPv6 nameserver": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: "[]:53",
+				},
+			},
+			errs: []*field.Error{
+				field.Invalid(fldPath.Child("rfc2136", "nameserver"), "[]:53", "nameserver must be set in the form host:port where host is an IPv4 address, an enclosed IPv6 address or a hostname and port is an optional port number."),
+			},
+		},
+		"rfc2136 provider with IPv6 nameserver": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: "[2001:db8::1]",
+				},
+			},
+			errs: []*field.Error{},
+		},
+		"rfc2136 provider with FQDN nameserver": {
 			cfg: &cmacme.ACMEChallengeSolverDNS01{
 				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
 					Nameserver: "dns.example.com",
 				},
 			},
+			errs: []*field.Error{},
+		},
+		"rfc2136 provider with hostname nameserver": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: "dns",
+				},
+			},
+			errs: []*field.Error{},
+		},
+		"rfc2136 provider with nameserver without host": {
+			cfg: &cmacme.ACMEChallengeSolverDNS01{
+				RFC2136: &cmacme.ACMEIssuerDNS01ProviderRFC2136{
+					Nameserver: ":53",
+				},
+			},
 			errs: []*field.Error{
-				field.Invalid(fldPath.Child("rfc2136", "nameserver"), "", "Nameserver invalid. Check the documentation for details."),
+				field.Invalid(fldPath.Child("rfc2136", "nameserver"), ":53", "nameserver must be set in the form host:port where host is an IPv4 address, an enclosed IPv6 address or a hostname and port is an optional port number."),
 			},
 		},
 		"rfc2136 provider using case-camel in algorithm": {
@@ -792,6 +976,104 @@ func TestValidateSecretKeySelector(t *testing.T) {
 			if len(errs) != len(s.errs) {
 				t.Errorf("Expected %v but got %v", s.errs, errs)
 				return
+			}
+			for i, e := range errs {
+				expectedErr := s.errs[i]
+				if !reflect.DeepEqual(e, expectedErr) {
+					t.Errorf("Expected %v but got %v", expectedErr, e)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateVenafiIssuerConfig(t *testing.T) {
+	fldPath := field.NewPath("test")
+	scenarios := map[string]struct {
+		cfg  *cmapi.VenafiIssuer
+		errs []*field.Error
+	}{
+		"valid": {
+			cfg: &cmapi.VenafiIssuer{
+				Zone: "a\\b\\c",
+				TPP: &cmapi.VenafiTPP{
+					URL: "https://tpp.example.com/vedsdk",
+				},
+			},
+		},
+		"missing zone": {
+			cfg: &cmapi.VenafiIssuer{
+				Zone: "",
+				TPP: &cmapi.VenafiTPP{
+					URL: "https://tpp.example.com/vedsdk",
+				},
+			},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("zone"), ""),
+			},
+		},
+		"missing configuration": {
+			cfg: &cmapi.VenafiIssuer{
+				Zone: "a\\b\\c",
+			},
+			errs: []*field.Error{
+				field.Required(fldPath, "please supply one of: tpp, cloud"),
+			},
+		},
+		"multiple configuration": {
+			cfg: &cmapi.VenafiIssuer{
+				Zone: "a\\b\\c",
+				TPP: &cmapi.VenafiTPP{
+					URL: "https://tpp.example.com/vedsdk",
+				},
+				Cloud: &cmapi.VenafiCloud{},
+			},
+			errs: []*field.Error{
+				field.Forbidden(fldPath, "please supply one of: tpp, cloud"),
+			},
+		},
+	}
+
+	for n, s := range scenarios {
+		t.Run(n, func(t *testing.T) {
+			errs := ValidateVenafiIssuerConfig(s.cfg, fldPath)
+			if len(errs) != len(s.errs) {
+				t.Fatalf("Expected %v but got %v", s.errs, errs)
+			}
+			for i, e := range errs {
+				expectedErr := s.errs[i]
+				if !reflect.DeepEqual(e, expectedErr) {
+					t.Errorf("Expected %v but got %v", expectedErr, e)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateVenafiTPP(t *testing.T) {
+	fldPath := field.NewPath("test")
+	scenarios := map[string]struct {
+		cfg  *cmapi.VenafiTPP
+		errs []*field.Error
+	}{
+		"valid": {
+			cfg: &cmapi.VenafiTPP{
+				URL: "https://tpp.example.com/vedsdk",
+			},
+		},
+		"missing url": {
+			cfg: &cmapi.VenafiTPP{},
+			errs: []*field.Error{
+				field.Required(fldPath.Child("url"), ""),
+			},
+		},
+	}
+
+	for n, s := range scenarios {
+		t.Run(n, func(t *testing.T) {
+			errs := ValidateVenafiTPP(s.cfg, fldPath)
+			if len(errs) != len(s.errs) {
+				t.Fatalf("Expected %v but got %v", s.errs, errs)
 			}
 			for i, e := range errs {
 				expectedErr := s.errs[i]

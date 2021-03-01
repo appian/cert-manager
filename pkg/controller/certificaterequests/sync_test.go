@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
-	"math/big"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ import (
 	fakeclock "k8s.io/utils/clock/testing"
 
 	"github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests/fake"
 	testpkg "github.com/jetstack/cert-manager/pkg/controller/test"
@@ -48,9 +47,8 @@ import (
 )
 
 var (
-	fixedClockStart   = time.Now()
-	fixedClock        = fakeclock.NewFakeClock(fixedClockStart)
-	serialNumberLimit = new(big.Int).Lsh(big.NewInt(1), 128)
+	fixedClockStart = time.Now()
+	fixedClock      = fakeclock.NewFakeClock(fixedClockStart)
 )
 
 func generateCSR(t *testing.T, secretKey crypto.Signer, alg x509.SignatureAlgorithm) []byte {
@@ -303,7 +301,7 @@ func TestSync(t *testing.T) {
 			builder: &testpkg.Builder{
 				CertManagerObjects: []runtime.Object{baseCR, baseIssuer},
 				ExpectedEvents: []string{
-					"Warning BadConfig Resource validation failed: spec.csr: Invalid value: []byte{0x62, 0x61, 0x64, 0x20, 0x63, 0x73, 0x72}: failed to decode csr: error decoding certificate request PEM block",
+					"Warning BadConfig Resource validation failed: spec.request: Invalid value: []byte{0x62, 0x61, 0x64, 0x20, 0x63, 0x73, 0x72}: failed to decode csr: error decoding certificate request PEM block",
 				},
 				ExpectedActions: []testpkg.Action{
 					testpkg.NewAction(coretesting.NewUpdateSubresourceAction(
@@ -316,7 +314,7 @@ func TestSync(t *testing.T) {
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
 								Reason:             "Failed",
-								Message:            "Resource validation failed: spec.csr: Invalid value: []byte{0x62, 0x61, 0x64, 0x20, 0x63, 0x73, 0x72}: failed to decode csr: error decoding certificate request PEM block",
+								Message:            "Resource validation failed: spec.request: Invalid value: []byte{0x62, 0x61, 0x64, 0x20, 0x63, 0x73, 0x72}: failed to decode csr: error decoding certificate request PEM block",
 								LastTransitionTime: &nowMetaTime,
 							}),
 							gen.SetCertificateRequestFailureTime(nowMetaTime),
@@ -378,7 +376,7 @@ func TestSync(t *testing.T) {
 						gen.SetCertificateRequestCertificate([]byte("a bad certificate")),
 					)},
 				ExpectedEvents: []string{
-					"Warning DecodeError Failed to decode returned certificate: error decoding cert PEM block",
+					"Warning DecodeError Failed to decode returned certificate: error decoding certificate PEM block",
 				},
 				ExpectedActions: []testpkg.Action{
 					testpkg.NewAction(coretesting.NewUpdateSubresourceAction(
@@ -391,7 +389,7 @@ func TestSync(t *testing.T) {
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
 								Reason:             "Failed",
-								Message:            "Failed to decode returned certificate: error decoding cert PEM block",
+								Message:            "Failed to decode returned certificate: error decoding certificate PEM block",
 								LastTransitionTime: &nowMetaTime,
 							}),
 							gen.SetCertificateRequestFailureTime(nowMetaTime),

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/test"
@@ -35,14 +35,14 @@ import (
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 )
 
-func newIssuer(name, namespace string) *v1alpha2.Issuer {
-	return &v1alpha2.Issuer{
+func newIssuer(name, namespace string) *v1.Issuer {
+	return &v1.Issuer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1alpha2.IssuerSpec{
-			IssuerConfig: v1alpha2.IssuerConfig{
+		Spec: v1.IssuerSpec{
+			IssuerConfig: v1.IssuerConfig{
 				ACME: &cmacme.ACMEIssuer{},
 			},
 		},
@@ -78,7 +78,7 @@ func TestSolverFor(t *testing.T) {
 				Issuer: newIssuer("test", "default"),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -109,7 +109,7 @@ func TestSolverFor(t *testing.T) {
 				Issuer: newIssuer("test", "default"),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -134,7 +134,7 @@ func TestSolverFor(t *testing.T) {
 				// don't include any secrets in the lister
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -159,7 +159,7 @@ func TestSolverFor(t *testing.T) {
 				// don't include any secrets in the lister
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -196,7 +196,7 @@ func TestSolverFor(t *testing.T) {
 				Issuer: newIssuer("test", "default"),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -227,7 +227,7 @@ func TestSolverFor(t *testing.T) {
 				Issuer: newIssuer("test", "default"),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Cloudflare: &cmacme.ACMEIssuerDNS01ProviderCloudflare{
 									Email: "test",
@@ -258,7 +258,7 @@ func TestSolverFor(t *testing.T) {
 				Issuer: newIssuer("test", "default"),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								AcmeDNS: &cmacme.ACMEIssuerDNS01ProviderAcmeDNS{
 									Host: "http://127.0.0.1/",
@@ -312,7 +312,7 @@ func TestSolveForDigitalOcean(t *testing.T) {
 		Issuer: newIssuer("test", "default"),
 		Challenge: &cmacme.Challenge{
 			Spec: cmacme.ChallengeSpec{
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					DNS01: &cmacme.ACMEChallengeSolverDNS01{
 						DigitalOcean: &cmacme.ACMEIssuerDNS01ProviderDigitalOcean{
 							Token: cmmeta.SecretKeySelector{
@@ -363,7 +363,7 @@ func TestRoute53TrimCreds(t *testing.T) {
 		Issuer: newIssuer("test", "default"),
 		Challenge: &cmacme.Challenge{
 			Spec: cmacme.ChallengeSpec{
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					DNS01: &cmacme.ACMEChallengeSolverDNS01{
 						Route53: &cmacme.ACMEIssuerDNS01ProviderRoute53{
 							AccessKeyID: "  test_with_spaces  ",
@@ -426,7 +426,7 @@ func TestRoute53AmbientCreds(t *testing.T) {
 				dnsProviders: newFakeDNSProviders(),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Route53: &cmacme.ACMEIssuerDNS01ProviderRoute53{
 									Region: "us-west-2",
@@ -456,7 +456,7 @@ func TestRoute53AmbientCreds(t *testing.T) {
 				dnsProviders: newFakeDNSProviders(),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Route53: &cmacme.ACMEIssuerDNS01ProviderRoute53{
 									Region: "us-west-2",
@@ -516,7 +516,7 @@ func TestRoute53AssumeRole(t *testing.T) {
 				dnsProviders: newFakeDNSProviders(),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Route53: &cmacme.ACMEIssuerDNS01ProviderRoute53{
 									Region: "us-west-2",
@@ -547,7 +547,7 @@ func TestRoute53AssumeRole(t *testing.T) {
 				dnsProviders: newFakeDNSProviders(),
 				Challenge: &cmacme.Challenge{
 					Spec: cmacme.ChallengeSpec{
-						Solver: &cmacme.ACMEChallengeSolver{
+						Solver: cmacme.ACMEChallengeSolver{
 							DNS01: &cmacme.ACMEChallengeSolverDNS01{
 								Route53: &cmacme.ACMEIssuerDNS01ProviderRoute53{
 									Region: "us-west-2",

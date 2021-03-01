@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"crypto/x509"
 	"math/bits"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 )
 
 var keyUsages = map[cmapi.KeyUsage]x509.KeyUsage{
@@ -49,7 +49,7 @@ var extKeyUsages = map[cmapi.KeyUsage]x509.ExtKeyUsage{
 	cmapi.UsageTimestamping:    x509.ExtKeyUsageTimeStamping,
 	cmapi.UsageOCSPSigning:     x509.ExtKeyUsageOCSPSigning,
 	cmapi.UsageMicrosoftSGC:    x509.ExtKeyUsageMicrosoftServerGatedCrypto,
-	cmapi.UsageNetscapSGC:      x509.ExtKeyUsageNetscapeServerGatedCrypto,
+	cmapi.UsageNetscapeSGC:     x509.ExtKeyUsageNetscapeServerGatedCrypto,
 }
 
 // KeyUsageType returns the relevant x509.KeyUsage or false if not found
@@ -91,6 +91,9 @@ func ExtKeyUsageStrings(usage []x509.ExtKeyUsage) []cmapi.KeyUsage {
 // keyUsageString returns the cmapi.KeyUsage and "unknown" if not found
 func keyUsageString(usage x509.KeyUsage) cmapi.KeyUsage {
 	for k, v := range keyUsages {
+		if usage == x509.KeyUsageDigitalSignature {
+			return cmapi.UsageDigitalSignature // we have KeyUsageDigitalSignature twice in our array, we should be consistent when parsing
+		}
 		if usage == v {
 			return k
 		}

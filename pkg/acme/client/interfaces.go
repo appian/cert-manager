@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package client
 import (
 	"context"
 
+	acmeutil "github.com/jetstack/cert-manager/pkg/acme/util"
+
 	"golang.org/x/crypto/acme"
 )
 
@@ -26,6 +28,7 @@ type Interface interface {
 	AuthorizeOrder(ctx context.Context, id []acme.AuthzID, opt ...acme.OrderOption) (*acme.Order, error)
 	GetOrder(ctx context.Context, url string) (*acme.Order, error)
 	FetchCert(ctx context.Context, url string, bundle bool) ([][]byte, error)
+	FetchCertAlternatives(ctx context.Context, url string, bundle bool) ([][][]byte, error)
 	WaitOrder(ctx context.Context, url string) (*acme.Order, error)
 	CreateOrderCert(ctx context.Context, finalizeURL string, csr []byte, bundle bool) (der [][]byte, certURL string, err error)
 	Accept(ctx context.Context, chal *acme.Challenge) (*acme.Challenge, error)
@@ -40,4 +43,6 @@ type Interface interface {
 	UpdateReg(ctx context.Context, a *acme.Account) (*acme.Account, error)
 }
 
-var _ Interface = &acme.Client{}
+var _ Interface = &acme.Client{
+	RetryBackoff: acmeutil.RetryBackoff,
+}

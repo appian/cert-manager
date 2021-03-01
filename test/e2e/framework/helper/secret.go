@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package helper
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -35,7 +36,7 @@ func (h *Helper) WaitForSecretCertificateData(ns, name string, timeout time.Dura
 		func() (bool, error) {
 			var err error
 			log.Logf("Waiting for Secret %s:%s to contain a certificate", ns, name)
-			secret, err = h.KubeClient.CoreV1().Secrets(ns).Get(name, metav1.GetOptions{})
+			secret, err = h.KubeClient.CoreV1().Secrets(ns).Get(context.TODO(), name, metav1.GetOptions{})
 			if err != nil {
 				return false, fmt.Errorf("error getting secret %s: %s", name, err)
 			}
@@ -44,8 +45,8 @@ func (h *Helper) WaitForSecretCertificateData(ns, name string, timeout time.Dura
 				return true, nil
 			}
 
-			log.Logf("Secret still does not contain certificate data %s/%s: %v",
-				secret.Namespace, secret.Name, secret.Data)
+			log.Logf("Secret still does not contain certificate data %s/%s",
+				secret.Namespace, secret.Name)
 			return false, nil
 		},
 	)

@@ -9,17 +9,23 @@ go_library(
     importpath = "github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/logs:go_default_library",
         "@com_github_miekg_dns//:go_default_library",
-        "@io_k8s_klog//:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["wait_test.go"],
+    srcs = [
+        "dns_test.go",
+        "wait_test.go",
+    ],
     data = glob(["testdata/**"]),
     embed = [":go_default_library"],
-    deps = ["@com_github_miekg_dns//:go_default_library"],
+    deps = [
+        "@com_github_miekg_dns//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+    ],
 )
 
 filegroup(

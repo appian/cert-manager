@@ -18,19 +18,19 @@ protobuf_deps()
 ## Load rules_go and dependencies
 http_archive(
     name = "io_bazel_rules_go",
+    sha256 = "2697f6bc7c529ee5e6a2d9799870b9ec9eaeb3ee7d70ed50b87a2c2c97e13d9e",
     urls = [
-        "https://storage.googleapis.com/bazel-mirror/github.com/bazelbuild/rules_go/releases/download/v0.20.2/rules_go-v0.20.2.tar.gz",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.20.2/rules_go-v0.20.2.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.23.8/rules_go-v0.23.8.tar.gz",
+        "https://github.com/bazelbuild/rules_go/releases/download/v0.23.8/rules_go-v0.23.8.tar.gz",
     ],
-    sha256 = "b9aa86ec08a292b97ec4591cf578e020b35f98e12173bbd4a921f84f583aebd9",
 )
 
-load("@io_bazel_rules_go//go:deps.bzl", "go_rules_dependencies", "go_register_toolchains")
+load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
 
 go_rules_dependencies()
 
 go_register_toolchains(
-    go_version = "1.13.4",
+    go_version = "1.15",
     nogo = "@//hack/build:nogo_vet",
 )
 
@@ -46,19 +46,21 @@ load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
 gazelle_dependencies()
 
 ## Load kubernetes repo-infra for tools like kazel
-git_repository(
+http_archive(
     name = "io_k8s_repo_infra",
-    commit = "967e39a37fb93640a37e272949ddf92a8c96f230",
-    remote = "https://github.com/kubernetes/repo-infra.git",
-    shallow_since = "1569300445 -0700",
+    strip_prefix = "repo-infra-0.0.2",
+    sha256 = "774e160ba1a2a66a736fdc39636dca799a09df015ac5e770a46ec43487ec5708",
+    urls = [
+        "https://github.com/kubernetes/repo-infra/archive/v0.0.2.tar.gz",
+    ],
 )
 
-## Load rules_docker and depdencies, for working with docker images
-git_repository(
+## Load rules_docker and dependencies, for working with docker images
+http_archive(
     name = "io_bazel_rules_docker",
-    remote = "https://github.com/bazelbuild/rules_docker.git",
-    commit = "80ea3aae060077e5fe0cdef1a5c570d4b7622100",
-    shallow_since = "1561646721 -0700",
+    sha256 = "4521794f0fba2e20f3bf15846ab5e01d5332e587e9ce81629c7f96c793bb7036",
+    strip_prefix = "rules_docker-0.14.4",
+    urls = ["https://github.com/bazelbuild/rules_docker/releases/download/v0.14.4/rules_docker-v0.14.4.tar.gz"],
 )
 
 load(
@@ -68,40 +70,36 @@ load(
 
 container_repositories()
 
+load("@io_bazel_rules_docker//repositories:deps.bzl", container_deps = "deps")
+
+container_deps()
+
+load("@io_bazel_rules_docker//repositories:pip_repositories.bzl", "pip_deps")
+
+pip_deps()
+
 load(
     "@io_bazel_rules_docker//container:container.bzl",
     "container_pull",
 )
-load(
-    "@io_bazel_rules_docker//go:image.bzl",
-    _go_image_repos = "repositories",
-)
+load("@io_bazel_rules_docker//go:image.bzl", _go_image_repos = "repositories")
 
 _go_image_repos()
 
-## Use 'static' distroless image for all builds
-container_pull(
-    name = "static_base",
-    registry = "gcr.io",
-    repository = "distroless/static",
-    digest = "sha256:cd0679a54d2abaf3644829f5e290ad8a10688847475f570fddb9963318cf9390",
-)
-
 # Load and define targets defined in //hack/bin
-load(
-    "//hack/bin:deps.bzl",
-    install_hack_bin = "install",
-)
+load("//hack/bin:deps.bzl", install_hack_bin = "install")
 
 install_hack_bin()
 
-# Load and define targets defined in //hack/bin
-load(
-    "//test/e2e:images.bzl",
-    install_e2e_images = "install",
-)
+# Load and define targets defined in //test/e2e
+load("//test/e2e:images.bzl", install_e2e_images = "install")
 
 install_e2e_images()
+
+# Install build image targets
+load("//build:images.bzl", "define_base_images")
+
+define_base_images()
 
 load("//hack/build:repos.bzl", "go_repositories")
 

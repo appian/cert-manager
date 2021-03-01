@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import (
 	informers "github.com/jetstack/cert-manager/pkg/client/informers/externalversions"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/logs"
+	"github.com/jetstack/cert-manager/pkg/metrics"
 	"github.com/jetstack/cert-manager/pkg/util"
 )
 
@@ -80,12 +81,6 @@ type Builder struct {
 	*controller.Context
 }
 
-func (b *Builder) logf(format string, args ...interface{}) {
-	if b.T != nil {
-		b.T.Logf(format, args...)
-	}
-}
-
 func (b *Builder) generateNameReactor(action coretesting.Action) (handled bool, ret runtime.Object, err error) {
 	obj := action.(coretesting.CreateAction).GetObject().(metav1.Object)
 	genName := obj.GetGenerateName()
@@ -119,6 +114,7 @@ func (b *Builder) Init() {
 	b.KubeSharedInformerFactory = kubeinformers.NewSharedInformerFactory(b.Client, informerResyncPeriod)
 	b.SharedInformerFactory = informers.NewSharedInformerFactory(b.CMClient, informerResyncPeriod)
 	b.stopCh = make(chan struct{})
+	b.Metrics = metrics.New(logs.Log)
 
 	// set the Clock on the context
 	if b.Clock == nil {
@@ -270,12 +266,9 @@ func (b *Builder) Stop() {
 	apiutil.Clock = clock.RealClock{}
 }
 
-func (b *Builder) Start(additional ...controller.RunFunc) {
+func (b *Builder) Start() {
 	b.KubeSharedInformerFactory.Start(b.stopCh)
 	b.SharedInformerFactory.Start(b.stopCh)
-	for _, fn := range additional {
-		go fn(b.stopCh)
-	}
 	// wait for caches to sync
 	b.Sync()
 }

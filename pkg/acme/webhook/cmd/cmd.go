@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,13 +21,12 @@ import (
 	"os"
 	"runtime"
 
-	"k8s.io/klog"
-
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/logs"
 
 	"github.com/jetstack/cert-manager/pkg/acme/webhook"
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/cmd/server"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 func RunWebhookServer(groupName string, hooks ...webhook.Solver) {
@@ -43,6 +42,7 @@ func RunWebhookServer(groupName string, hooks ...webhook.Solver) {
 	cmd := server.NewCommandStartWebhookServer(os.Stdout, os.Stderr, stopCh, groupName, hooks...)
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
 	if err := cmd.Execute(); err != nil {
-		klog.Fatal(err)
+		logf.Log.Error(err, "error executing command")
+		os.Exit(1)
 	}
 }

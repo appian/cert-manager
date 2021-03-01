@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,14 +21,18 @@ import (
 	"context"
 	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,12 +42,16 @@ import (
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
 	"github.com/jetstack/cert-manager/pkg/apis/certmanager"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests"
+	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests/util"
+	controllertest "github.com/jetstack/cert-manager/pkg/controller/test"
 	testpkg "github.com/jetstack/cert-manager/pkg/controller/test"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
 	"github.com/jetstack/cert-manager/test/unit/gen"
+	"github.com/jetstack/cert-manager/test/unit/listers"
 	testlisters "github.com/jetstack/cert-manager/test/unit/listers"
 )
 
@@ -180,7 +188,7 @@ func TestSign(t *testing.T) {
 				},
 			},
 		},
-		"a secret with invlaid data should set condition to pending and wait for re-sync": {
+		"a secret with invalid data should set condition to pending and wait for re-sync": {
 			certificateRequest: baseCR.DeepCopy(),
 			builder: &testpkg.Builder{
 				KubeObjects: []runtime.Object{badDataSecret},
@@ -275,16 +283,16 @@ func TestSign(t *testing.T) {
 				},
 			},
 		},
-		"a secret that fails to sign should set condition to failed": {
+		"a secret that fails to sign due to failing to generate the certificate template should set condition to failed": {
 			certificateRequest: baseCR.DeepCopy(),
 			templateGenerator: func(*cmapi.CertificateRequest) (*x509.Certificate, error) {
-				return nil, errors.New("this is a sign error")
+				return nil, errors.New("this is a template generate error")
 			},
 			builder: &testpkg.Builder{
 				KubeObjects:        []runtime.Object{rsaCASecret},
 				CertManagerObjects: []runtime.Object{baseCR.DeepCopy(), baseIssuer.DeepCopy()},
 				ExpectedEvents: []string{
-					"Warning SigningError Error generating certificate template: this is a sign error",
+					"Warning SigningError Error generating certificate template: this is a template generate error",
 				},
 				ExpectedActions: []testpkg.Action{
 					testpkg.NewAction(coretesting.NewUpdateSubresourceAction(
@@ -296,7 +304,7 @@ func TestSign(t *testing.T) {
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
 								Reason:             cmapi.CertificateRequestReasonFailed,
-								Message:            "Error generating certificate template: this is a sign error",
+								Message:            "Error generating certificate template: this is a template generate error",
 								LastTransitionTime: &metaFixedClockStart,
 							}),
 							gen.SetCertificateRequestFailureTime(metaFixedClockStart),
@@ -305,7 +313,7 @@ func TestSign(t *testing.T) {
 				},
 			},
 		},
-		"a successful signinig should set condition to Ready": {
+		"a successful signing should set condition to Ready": {
 			certificateRequest: baseCR.DeepCopy(),
 			templateGenerator: func(cr *cmapi.CertificateRequest) (*x509.Certificate, error) {
 				_, err := pki.GenerateTemplateFromCertificateRequest(cr)
@@ -390,4 +398,166 @@ func runTest(t *testing.T, test testT) {
 	}
 
 	test.builder.CheckAndFinish(err)
+}
+
+func TestCA_Sign(t *testing.T) {
+	rsaPair, err := pki.GenerateRSAPrivateKey(2048)
+	require.NoError(t, err)
+	rsaCSR := generateCSR(t, rsaPair)
+
+	tests := map[string]struct {
+		givenCASecret    *corev1.Secret
+		givenCAIssuer    cmapi.GenericIssuer
+		givenCR          *cmapi.CertificateRequest
+		assertSignedCert func(t *testing.T, got *x509.Certificate)
+		wantErr          string
+	}{
+		"when the CertificateRequest has the duration field set, it should appear as notAfter on the signed ca": {
+			givenCAIssuer: gen.Issuer("issuer-1", gen.SetIssuerCA(cmapi.CAIssuer{
+				SecretName: "secret-1",
+			})),
+			givenCR: gen.CertificateRequest("cr-1",
+				gen.SetCertificateRequestCSR(rsaCSR),
+				gen.SetCertificateRequestIssuer(cmmeta.ObjectReference{
+					Name:  "issuer-1",
+					Group: certmanager.GroupName,
+					Kind:  "Issuer",
+				}),
+				gen.SetCertificateRequestDuration(&metav1.Duration{
+					Duration: 30 * time.Minute,
+				}),
+			),
+			givenCASecret: gen.SecretFrom(gen.Secret("secret-1"), gen.SetSecretNamespace("default"), gen.SetSecretData(secretDataFor(t, rsaPair,
+				&x509.Certificate{
+					SerialNumber: big.NewInt(1234),
+					IsCA:         true,
+				},
+			))),
+			assertSignedCert: func(t *testing.T, got *x509.Certificate) {
+				// The notAfter field uses a precision of 1 second. That's
+				// why we truncate the expected time.
+				expectNotAfter := time.Now().UTC().Truncate(1 * time.Second).Add(30 * time.Minute)
+				assert.Equalf(t, expectNotAfter, got.NotAfter, "time mismatch, expect='%s', got='%s'", expectNotAfter.String(), got.NotAfter.String())
+			},
+		},
+		"when the CertificateRequest has the isCA field set, it should appear on the signed ca": {
+			givenCAIssuer: gen.Issuer("issuer-1", gen.SetIssuerCA(cmapi.CAIssuer{
+				SecretName: "secret-1",
+			})),
+			givenCR: gen.CertificateRequest("cr-1",
+				gen.SetCertificateRequestCSR(rsaCSR),
+				gen.SetCertificateRequestIssuer(cmmeta.ObjectReference{
+					Name:  "issuer-1",
+					Group: certmanager.GroupName,
+					Kind:  "Issuer",
+				}),
+				gen.SetCertificateRequestIsCA(true),
+			),
+			givenCASecret: gen.SecretFrom(gen.Secret("secret-1"), gen.SetSecretNamespace("default"), gen.SetSecretData(secretDataFor(t, rsaPair,
+				&x509.Certificate{
+					SerialNumber: big.NewInt(1234),
+					IsCA:         true,
+				},
+			))),
+			assertSignedCert: func(t *testing.T, got *x509.Certificate) {
+				assert.Equal(t, true, got.IsCA)
+			},
+		},
+		"when the Issuer has ocspServers set, it should appear on the signed ca": {
+			givenCAIssuer: gen.Issuer("issuer-1", gen.SetIssuerCA(cmapi.CAIssuer{
+				SecretName:  "secret-1",
+				OCSPServers: []string{"http://ocsp-v3.example.org"},
+			})),
+			givenCR: gen.CertificateRequest("cr-1",
+				gen.SetCertificateRequestCSR(rsaCSR),
+				gen.SetCertificateRequestIssuer(cmmeta.ObjectReference{
+					Name:  "issuer-1",
+					Group: certmanager.GroupName,
+					Kind:  "Issuer",
+				}),
+			),
+			givenCASecret: gen.SecretFrom(gen.Secret("secret-1"), gen.SetSecretNamespace("default"), gen.SetSecretData(secretDataFor(t, rsaPair,
+				&x509.Certificate{
+					SerialNumber: big.NewInt(1234),
+					IsCA:         true,
+				},
+			))),
+			assertSignedCert: func(t *testing.T, got *x509.Certificate) {
+				assert.Equal(t, []string{"http://ocsp-v3.example.org"}, got.OCSPServer)
+			},
+		},
+		"when the Issuer has crlDistributionPoints set, it should appear on the signed ca ": {
+			givenCAIssuer: gen.Issuer("issuer-1", gen.SetIssuerCA(cmapi.CAIssuer{
+				SecretName:            "secret-1",
+				CRLDistributionPoints: []string{"http://www.example.com/crl/test.crl"},
+			})),
+			givenCR: gen.CertificateRequest("cr-1",
+				gen.SetCertificateRequestIsCA(true),
+				gen.SetCertificateRequestCSR(rsaCSR),
+				gen.SetCertificateRequestIssuer(cmmeta.ObjectReference{
+					Name:  "issuer-1",
+					Group: certmanager.GroupName,
+					Kind:  "Issuer",
+				}),
+			),
+			givenCASecret: gen.SecretFrom(gen.Secret("secret-1"), gen.SetSecretNamespace("default"), gen.SetSecretData(secretDataFor(t, rsaPair,
+				&x509.Certificate{
+					SerialNumber: big.NewInt(1234),
+					IsCA:         true,
+				},
+			))),
+			assertSignedCert: func(t *testing.T, gotCA *x509.Certificate) {
+				assert.Equal(t, []string{"http://www.example.com/crl/test.crl"}, gotCA.CRLDistributionPoints)
+			},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := &controllertest.FakeRecorder{}
+
+			c := &CA{
+				issuerOptions: controller.IssuerOptions{
+					ClusterResourceNamespace:        "",
+					ClusterIssuerAmbientCredentials: false,
+					IssuerAmbientCredentials:        false,
+				},
+				reporter: util.NewReporter(fixedClock, rec),
+				secretsLister: listers.FakeSecretListerFrom(listers.NewFakeSecretLister(),
+					listers.SetFakeSecretNamespaceListerGet(test.givenCASecret, nil),
+				),
+				templateGenerator: pki.GenerateTemplateFromCertificateRequest,
+			}
+
+			gotIssueResp, gotErr := c.Sign(context.Background(), test.givenCR, test.givenCAIssuer)
+			if test.wantErr != "" {
+				require.EqualError(t, gotErr, test.wantErr)
+			} else {
+				require.NoError(t, gotErr)
+
+				require.NotNil(t, gotIssueResp)
+				gotCert, err := pki.DecodeX509CertificateBytes(gotIssueResp.Certificate)
+				require.NoError(t, err)
+
+				test.assertSignedCert(t, gotCert)
+			}
+		})
+	}
+}
+
+// Returns a map that is meant to be used for creating a certificate Secret
+// that contains the fields "tls.crt" and "tls.key".
+func secretDataFor(t *testing.T, caKey *rsa.PrivateKey, caCrt *x509.Certificate) (secretData map[string][]byte) {
+	rootCADER, err := x509.CreateCertificate(rand.Reader, caCrt, caCrt, caKey.Public(), caKey)
+	require.NoError(t, err)
+	caCrt, err = x509.ParseCertificate(rootCADER)
+	require.NoError(t, err)
+	caKeyPEM, err := pki.EncodePKCS8PrivateKey(caKey)
+	require.NoError(t, err)
+	caCrtPEM, err := pki.EncodeX509(caCrt)
+	require.NoError(t, err)
+
+	return map[string][]byte{
+		"tls.key": caKeyPEM,
+		"tls.crt": caCrtPEM,
+	}
 }

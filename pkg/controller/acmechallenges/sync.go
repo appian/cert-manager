@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,21 +20,20 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"time"
 
 	acmeapi "golang.org/x/crypto/acme"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/jetstack/cert-manager/pkg/acme"
 	acmecl "github.com/jetstack/cert-manager/pkg/acme/client"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/feature"
 	dnsutil "github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
-	"github.com/jetstack/cert-manager/pkg/metrics"
 	utilfeature "github.com/jetstack/cert-manager/pkg/util/feature"
 )
 
@@ -58,10 +57,9 @@ type solver interface {
 // Sync will process this ACME Challenge.
 // It is the core control function for ACME challenges.
 func (c *controller) Sync(ctx context.Context, ch *cmacme.Challenge) (err error) {
-	metrics.Default.IncrementSyncCallCount(ControllerName)
-
 	log := logf.FromContext(ctx).WithValues("dnsName", ch.Spec.DNSName, "type", ch.Spec.Type)
 	ctx = logf.NewContext(ctx, log)
+
 	oldChal := ch
 	ch = ch.DeepCopy()
 
@@ -74,7 +72,7 @@ func (c *controller) Sync(ctx context.Context, ch *cmacme.Challenge) (err error)
 		if reflect.DeepEqual(oldChal.Status, ch.Status) && len(oldChal.Finalizers) == len(ch.Finalizers) {
 			return
 		}
-		_, updateErr := c.cmClient.AcmeV1alpha2().Challenges(ch.Namespace).UpdateStatus(ch)
+		_, updateErr := c.cmClient.AcmeV1().Challenges(ch.Namespace).UpdateStatus(context.TODO(), ch, metav1.UpdateOptions{})
 		if updateErr != nil {
 			err = utilerrors.NewAggregate([]error{err, updateErr})
 		}
@@ -117,7 +115,7 @@ func (c *controller) Sync(ctx context.Context, ch *cmacme.Challenge) (err error)
 		return nil
 	}
 
-	cl, err := c.acmeHelper.ClientForIssuer(genericIssuer)
+	cl, err := c.accountRegistry.GetClient(string(genericIssuer.GetUID()))
 	if err != nil {
 		return err
 	}
@@ -190,8 +188,7 @@ func (c *controller) Sync(ctx context.Context, ch *cmacme.Challenge) (err error)
 			return err
 		}
 
-		// retry after 10s
-		c.queue.AddAfter(key, time.Second*10)
+		c.queue.AddAfter(key, c.DNS01CheckRetryPeriod)
 
 		return nil
 	}
@@ -252,14 +249,14 @@ func (c *controller) handleFinalizer(ctx context.Context, ch *cmacme.Challenge) 
 
 	defer func() {
 		// call UpdateStatus first as we may have updated the challenge.status.reason field
-		ch, updateErr := c.cmClient.AcmeV1alpha2().Challenges(ch.Namespace).UpdateStatus(ch)
+		ch, updateErr := c.cmClient.AcmeV1().Challenges(ch.Namespace).UpdateStatus(context.TODO(), ch, metav1.UpdateOptions{})
 		if updateErr != nil {
 			err = utilerrors.NewAggregate([]error{err, updateErr})
 			return
 		}
 		// call Update to remove the metadata.finalizers entry
 		ch.Finalizers = ch.Finalizers[1:]
-		_, updateErr = c.cmClient.AcmeV1alpha2().Challenges(ch.Namespace).Update(ch)
+		_, updateErr = c.cmClient.AcmeV1().Challenges(ch.Namespace).Update(context.TODO(), ch, metav1.UpdateOptions{})
 		if updateErr != nil {
 			err = utilerrors.NewAggregate([]error{err, updateErr})
 			return
@@ -334,7 +331,7 @@ func (c *controller) syncChallengeStatus(ctx context.Context, cl acmecl.Interfac
 func (c *controller) acceptChallenge(ctx context.Context, cl acmecl.Interface, ch *cmacme.Challenge) error {
 	log := logf.FromContext(ctx, "acceptChallenge")
 
-	log.Info("accepting challenge with ACME server")
+	log.V(logf.DebugLevel).Info("accepting challenge with ACME server")
 	// We manually construct an ACME challenge here from our own internal type
 	// to save additional round trips to the ACME server.
 	acmeChal := &acmeapi.Challenge{
@@ -351,8 +348,8 @@ func (c *controller) acceptChallenge(ctx context.Context, cl acmecl.Interface, c
 		return handleError(ch, err)
 	}
 
-	log.Info("waiting for authorization for domain")
-	authorization, err := cl.WaitAuthorization(ctx, ch.Spec.AuthzURL)
+	log.V(logf.DebugLevel).Info("waiting for authorization for domain")
+	authorization, err := cl.WaitAuthorization(ctx, ch.Spec.AuthorizationURL)
 	if err != nil {
 		log.Error(err, "error waiting for authorization")
 		return c.handleAuthorizationError(ch, err)
@@ -388,9 +385,9 @@ func (c *controller) handleAuthorizationError(ch *cmacme.Challenge, err error) e
 
 func (c *controller) solverFor(challengeType cmacme.ACMEChallengeType) (solver, error) {
 	switch challengeType {
-	case "http-01":
+	case cmacme.ACMEChallengeTypeHTTP01:
 		return c.httpSolver, nil
-	case "dns-01":
+	case cmacme.ACMEChallengeTypeDNS01:
 		return c.dnsSolver, nil
 	}
 	return nil, fmt.Errorf("no solver for %q implemented", challengeType)

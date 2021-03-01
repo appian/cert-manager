@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,8 +27,10 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
 
+	"github.com/jetstack/cert-manager/pkg/acme/accounts"
 	clientset "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	informers "github.com/jetstack/cert-manager/pkg/client/informers/externalversions"
+	"github.com/jetstack/cert-manager/pkg/metrics"
 )
 
 // Context contains various types that are used by controller implementations.
@@ -66,12 +68,14 @@ type Context struct {
 	// time.Now, to make it easier to test controllers that utilise time
 	Clock clock.Clock
 
+	// Metrics is used for exposing Prometheus metrics across the controllers
+	Metrics *metrics.Metrics
+
 	IssuerOptions
 	ACMEOptions
 	IngressShimOptions
 	CertificateOptions
 	SchedulerOptions
-	WebhookBootstrapOptions
 }
 
 type IssuerOptions struct {
@@ -87,11 +91,6 @@ type IssuerOptions struct {
 	// IssuerAmbientCredentials controls whether an issuer should pick up ambient
 	// credentials, such as those from metadata services, to construct clients.
 	IssuerAmbientCredentials bool
-
-	// RenewBeforeExpiryDuration is the default 'renew before expiry' time for Certificates.
-	// Once a certificate is within this duration until expiry, a new Certificate
-	// will be attempted to be issued.
-	RenewBeforeExpiryDuration time.Duration
 }
 
 type ACMEOptions struct {
@@ -112,12 +111,19 @@ type ACMEOptions struct {
 	HTTP01SolverResourceLimitsMemory resource.Quantity
 
 	// DNS01CheckAuthoritative is a flag for controlling if auth nss are used
-	// for checking propogation of an RR. This is the ideal scenario
+	// for checking propagation of an RR. This is the ideal scenario
 	DNS01CheckAuthoritative bool
 
 	// DNS01Nameservers is a list of nameservers to use when performing self-checks
 	// for ACME DNS01 validations.
 	DNS01Nameservers []string
+
+	// AccountRegistry is used as a cache of ACME accounts between various
+	// components of cert-manager
+	AccountRegistry accounts.Registry
+
+	// DNS01CheckRetryPeriod is the time the controller should wait between checking if a ACME dns entry exists.
+	DNS01CheckRetryPeriod time.Duration
 }
 
 type IngressShimOptions struct {
@@ -138,21 +144,4 @@ type SchedulerOptions struct {
 	// MaxConcurrentChallenges determines the maximum number of challenges that can be
 	// scheduled as 'processing' at once.
 	MaxConcurrentChallenges int
-}
-
-type WebhookBootstrapOptions struct {
-	// Namespace is the namespace the webhook CA and serving secret will be
-	// created in.
-	// If not specified, it will default to the same namespace as cert-manager.
-	Namespace string
-
-	// CASecretName is the name of the secret containing the webhook's root CA
-	CASecretName string
-
-	// ServingSecretName is the name of the secret containing the webhook's
-	// serving certificate
-	ServingSecretName string
-
-	// DNSNames are the dns names that should be set on the serving certificate
-	DNSNames []string
 }

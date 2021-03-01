@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2019 The Jetstack cert-manager contributors.
+# Copyright 2020 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,8 +36,14 @@ module_name="github.com/jetstack/cert-manager"
 # Generate deepcopy functions for all internal and external APIs
 deepcopy_inputs=(
   pkg/apis/certmanager/v1alpha2 \
+  pkg/apis/certmanager/v1alpha3 \
+  pkg/apis/certmanager/v1beta1 \
+  pkg/apis/certmanager/v1 \
   pkg/internal/apis/certmanager \
   pkg/apis/acme/v1alpha2 \
+  pkg/apis/acme/v1alpha3 \
+  pkg/apis/acme/v1beta1 \
+  pkg/apis/acme/v1 \
   pkg/internal/apis/acme \
   pkg/apis/meta/v1 \
   pkg/internal/apis/meta \
@@ -52,13 +58,25 @@ client_package="${module_name}/${client_subpackage}"
 # Generate clientsets, listers and informers for user-facing API types
 client_inputs=(
   pkg/apis/certmanager/v1alpha2 \
+  pkg/apis/certmanager/v1alpha3 \
+  pkg/apis/certmanager/v1beta1 \
+  pkg/apis/certmanager/v1 \
   pkg/apis/acme/v1alpha2 \
+  pkg/apis/acme/v1alpha3 \
+  pkg/apis/acme/v1beta1 \
+  pkg/apis/acme/v1 \
 )
 
 # Generate defaulting functions to be used by the mutating webhook
 defaulter_inputs=(
   pkg/internal/apis/certmanager/v1alpha2 \
+  pkg/internal/apis/certmanager/v1alpha3 \
+  pkg/internal/apis/certmanager/v1beta1 \
+  pkg/internal/apis/certmanager/v1 \
   pkg/internal/apis/acme/v1alpha2 \
+  pkg/internal/apis/acme/v1alpha3 \
+  pkg/internal/apis/acme/v1beta1 \
+  pkg/internal/apis/acme/v1 \
   pkg/internal/apis/meta/v1 \
   pkg/webhook/handlers/testdata/apis/testgroup/v2 \
   pkg/webhook/handlers/testdata/apis/testgroup/v1 \
@@ -67,7 +85,13 @@ defaulter_inputs=(
 # Generate conversion functions to be used by the conversion webhook
 conversion_inputs=(
   pkg/internal/apis/certmanager/v1alpha2 \
+  pkg/internal/apis/certmanager/v1alpha3 \
+  pkg/internal/apis/certmanager/v1beta1 \
+  pkg/internal/apis/certmanager/v1 \
   pkg/internal/apis/acme/v1alpha2 \
+  pkg/internal/apis/acme/v1alpha3 \
+  pkg/internal/apis/acme/v1beta1 \
+  pkg/internal/apis/acme/v1 \
   pkg/internal/apis/meta/v1 \
   pkg/webhook/handlers/testdata/apis/testgroup/v2 \
   pkg/webhook/handlers/testdata/apis/testgroup/v1 \
@@ -121,6 +145,15 @@ clean() {
   find "$path" -name "$name" -delete
 }
 
+mkcp() {
+  src="$1"
+  dst="$2"
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+}
+# Export mkcp for use in sub-shells
+export -f mkcp
+
 copyfiles() {
   # Don't copy data if the workspace directory is already within the GOPATH
   if [ "${BUILD_WORKSPACE_DIRECTORY:0:${#GOPATH}}" = "$GOPATH" ]; then
@@ -134,7 +167,8 @@ copyfiles() {
   fi
   (
     cd "$GOPATH/src/$module_name/$path"
-    find "." -name "$name" -exec cp {} "$BUILD_WORKSPACE_DIRECTORY/$path/{}" \;
+
+    find "." -name "$name" -exec bash -c "mkcp {} \"$BUILD_WORKSPACE_DIRECTORY/$path/{}\"" \;
   )
 }
 
@@ -146,7 +180,7 @@ gen-deepcopy() {
   prefixed_inputs=( "${deepcopy_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$deepcopygen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --input-dirs "$joined" \
     --output-file-base zz_generated.deepcopy \
     --bounding-dirs "${module_name}"
@@ -161,7 +195,7 @@ gen-clientsets() {
   prefixed_inputs=( "${client_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$clientgen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --clientset-name versioned \
     --input-base "" \
     --input "$joined" \
@@ -175,7 +209,7 @@ gen-listers() {
   prefixed_inputs=( "${client_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$listergen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --input-dirs "$joined" \
     --output-package "${client_package}"/listers
   copyfiles "${client_subpackage}/listers" "*.go"
@@ -187,7 +221,7 @@ gen-informers() {
   prefixed_inputs=( "${client_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$informergen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --input-dirs "$joined" \
     --versioned-clientset-package "${client_package}"/clientset/versioned \
     --listers-package "${client_package}"/listers \
@@ -202,7 +236,7 @@ gen-defaulters() {
   prefixed_inputs=( "${defaulter_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$defaultergen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --input-dirs "$joined" \
     -O zz_generated.defaults
   for dir in "${defaulter_inputs[@]}"; do
@@ -217,7 +251,7 @@ gen-conversions() {
   prefixed_inputs=( "${conversion_inputs[@]/#/$module_name/}" )
   joined=$( IFS=$','; echo "${prefixed_inputs[*]}" )
   "$conversiongen" \
-    --go-header-file hack/boilerplate/boilerplate.go.txt \
+    --go-header-file hack/boilerplate/boilerplate.generatego.txt \
     --input-dirs "$joined" \
     -O zz_generated.conversion
   for dir in "${conversion_inputs[@]}"; do

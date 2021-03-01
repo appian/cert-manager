@@ -12,13 +12,15 @@ package route53
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
+	logf "github.com/jetstack/cert-manager/pkg/logs"
+
+	"github.com/go-logr/logr"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -27,7 +29,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/sts/stsiface"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 	pkgutil "github.com/jetstack/cert-manager/pkg/util"
-	"k8s.io/klog"
 )
 
 const (
@@ -40,28 +41,7 @@ type DNSProvider struct {
 	dns01Nameservers []string
 	client           *route53.Route53
 	hostedZoneID     string
-}
-
-// customRetryer implements the client.Retryer interface by composing the
-// DefaultRetryer. It controls the logic for retrying recoverable request
-// errors (e.g. when rate limits are exceeded).
-type customRetryer struct {
-	client.DefaultRetryer
-}
-
-// RetryRules overwrites the DefaultRetryer's method.
-// It uses a basic exponential backoff algorithm that returns an initial
-// delay of ~400ms with an upper limit of ~30 seconds which should prevent
-// causing a high number of consecutive throttling errors.
-// For reference: Route 53 enforces an account-wide(!) 5req/s query limit.
-func (d customRetryer) RetryRules(r *request.Request) time.Duration {
-	retryCount := r.RetryCount
-	if retryCount > 7 {
-		retryCount = 7
-	}
-
-	delay := (1 << uint(retryCount)) * (rand.Intn(50) + 200)
-	return time.Duration(delay) * time.Millisecond
+	log              logr.Logger
 }
 
 type sessionProvider struct {
@@ -71,6 +51,7 @@ type sessionProvider struct {
 	Region          string
 	Role            string
 	StsProvider     func(*session.Session) stsiface.STSAPI
+	log             logr.Logger
 }
 
 func (d *sessionProvider) GetSession() (*session.Session, error) {
@@ -85,20 +66,18 @@ func (d *sessionProvider) GetSession() (*session.Session, error) {
 
 	useAmbientCredentials := d.Ambient && (d.AccessKeyID == "" && d.SecretAccessKey == "")
 
-	r := customRetryer{}
-	r.NumMaxRetries = maxRetries
-	config := request.WithRetryer(aws.NewConfig(), r)
+	config := aws.NewConfig()
 	sessionOpts := session.Options{
 		Config: *config,
 	}
 
 	if useAmbientCredentials {
-		klog.V(5).Infof("using ambient credentials")
+		d.log.V(logf.DebugLevel).Info("using ambient credentials")
 		// Leaving credentials unset results in a default credential chain being
 		// used; this chain is a reasonable default for getting ambient creds.
 		// https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html#specifying-credentials
 	} else {
-		klog.V(5).Infof("not using ambient credentials")
+		d.log.V(logf.DebugLevel).Info("not using ambient credentials")
 		sessionOpts.Config.Credentials = credentials.NewStaticCredentials(d.AccessKeyID, d.SecretAccessKey, "")
 		// also disable 'ambient' region sources
 		sessionOpts.SharedConfigState = session.SharedConfigDisable
@@ -110,7 +89,7 @@ func (d *sessionProvider) GetSession() (*session.Session, error) {
 	}
 
 	if d.Role != "" {
-		klog.V(5).Infof("assuming role: %s", d.Role)
+		d.log.V(logf.DebugLevel).WithValues("role", d.Role).Info("assuming role")
 		stsSvc := d.StsProvider(sess)
 		result, err := stsSvc.AssumeRole(&sts.AssumeRoleInput{
 			RoleArn:         aws.String(d.Role),
@@ -152,6 +131,7 @@ func newSessionProvider(accessKeyID, secretAccessKey, region, role string, ambie
 		Region:          region,
 		Role:            role,
 		StsProvider:     defaultSTSProvider,
+		log:             logf.Log.WithName("route53-session-provider"),
 	}, nil
 }
 
@@ -164,6 +144,10 @@ func defaultSTSProvider(sess *session.Session) stsiface.STSAPI {
 // unset and the 'ambient' option is set, credentials from the environment.
 func NewDNSProvider(accessKeyID, secretAccessKey, hostedZoneID, region, role string, ambient bool, dns01Nameservers []string) (*DNSProvider, error) {
 	provider, err := newSessionProvider(accessKeyID, secretAccessKey, region, role, ambient)
+	if err != nil {
+		return nil, err
+	}
+
 	sess, err := provider.GetSession()
 	if err != nil {
 		return nil, err
@@ -175,6 +159,7 @@ func NewDNSProvider(accessKeyID, secretAccessKey, hostedZoneID, region, role str
 		client:           client,
 		hostedZoneID:     hostedZoneID,
 		dns01Nameservers: dns01Nameservers,
+		log:              logf.Log.WithName("route53"),
 	}, nil
 }
 
@@ -214,13 +199,13 @@ func (r *DNSProvider) changeRecord(action, fqdn, value string, ttl int) error {
 	if err != nil {
 		if awserr, ok := err.(awserr.Error); ok {
 			if action == route53.ChangeActionDelete && awserr.Code() == route53.ErrCodeInvalidChangeBatch {
-				klog.V(5).Infof("ignoring InvalidChangeBatch error: %v", err)
+				r.log.V(logf.DebugLevel).WithValues("error", err).Info("ignoring InvalidChangeBatch error")
 				// If we try to delete something and get a 'InvalidChangeBatch' that
 				// means it's already deleted, no need to consider it an error.
 				return nil
 			}
 		}
-		return fmt.Errorf("Failed to change Route 53 record set: %v", err)
+		return fmt.Errorf("Failed to change Route 53 record set: %v", removeReqID(err))
 
 	}
 
@@ -232,7 +217,7 @@ func (r *DNSProvider) changeRecord(action, fqdn, value string, ttl int) error {
 		}
 		resp, err := r.client.GetChange(reqParams)
 		if err != nil {
-			return false, fmt.Errorf("Failed to query Route 53 change status: %v", err)
+			return false, fmt.Errorf("Failed to query Route 53 change status: %v", removeReqID(err))
 		}
 		if *resp.ChangeInfo.Status == route53.ChangeStatusInsync {
 			return true, nil
@@ -257,19 +242,26 @@ func (r *DNSProvider) getHostedZoneID(fqdn string) (string, error) {
 	}
 	resp, err := r.client.ListHostedZonesByName(reqParams)
 	if err != nil {
-		return "", err
+		return "", removeReqID(err)
 	}
 
-	var hostedZoneID string
+	zoneToID := make(map[string]string)
+	var hostedZones []string
 	for _, hostedZone := range resp.HostedZones {
 		// .Name has a trailing dot
-		if !*hostedZone.Config.PrivateZone && *hostedZone.Name == authZone {
-			hostedZoneID = *hostedZone.Id
-			break
+		if !*hostedZone.Config.PrivateZone {
+			zoneToID[*hostedZone.Name] = *hostedZone.Id
+			hostedZones = append(hostedZones, *hostedZone.Name)
 		}
 	}
+	authZone, err = util.FindBestMatch(fqdn, hostedZones...)
+	if err != nil {
+		return "", fmt.Errorf("Zone %s not found in Route 53 for domain %s", authZone, fqdn)
+	}
 
-	if len(hostedZoneID) == 0 {
+	hostedZoneID, ok := zoneToID[authZone]
+
+	if len(hostedZoneID) == 0 || !ok {
 		return "", fmt.Errorf("Zone %s not found in Route 53 for domain %s", authZone, fqdn)
 	}
 
@@ -289,4 +281,25 @@ func newTXTRecordSet(fqdn, value string, ttl int) *route53.ResourceRecordSet {
 			{Value: aws.String(value)},
 		},
 	}
+}
+
+// The aws-sdk-go library appends a request id to its error messages. We
+// want our error messages to be the same when the cause is the same to
+// avoid spurious challenge updates.
+//
+// The given error must not be nil. This function must be called everywhere
+// we have a non-nil error coming from an aws-sdk-go func.
+func removeReqID(err error) error {
+	// NOTE(mael): I first tried to unwrap the RequestFailure to get rid of
+	// this request id. But the concrete type requestFailure is private, so
+	// I can't unwrap it. Instead, I recreate a new awserr.baseError. It's
+	// also a awserr.Error except it doesn't have the request id.
+	//
+	// Also note that we do not give the origErr to awserr.New. If we did,
+	// err.Error() would show the origErr, which we don't want since it
+	// contains a request id.
+	if e, ok := err.(awserr.RequestFailure); ok {
+		return awserr.New(e.Code(), e.Message(), nil)
+	}
+	return err
 }

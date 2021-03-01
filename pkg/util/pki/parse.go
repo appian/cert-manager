@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -110,7 +110,7 @@ func DecodeX509CertificateChainBytes(certBytes []byte) ([]*x509.Certificate, err
 	}
 
 	if len(certs) == 0 {
-		return nil, errors.NewInvalidData("error decoding cert PEM block")
+		return nil, errors.NewInvalidData("error decoding certificate PEM block")
 	}
 
 	return certs, nil

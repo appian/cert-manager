@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,20 +19,19 @@ package clusterissuers
 import (
 	"fmt"
 
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
 )
 
-func (c *controller) issuersForSecret(secret *corev1.Secret) ([]*v1alpha2.ClusterIssuer, error) {
+func (c *controller) issuersForSecret(secret *corev1.Secret) ([]*v1.ClusterIssuer, error) {
 	issuers, err := c.clusterIssuerLister.List(labels.NewSelector())
 
 	if err != nil {
-		return nil, fmt.Errorf("error listing certificiates: %s", err.Error())
+		return nil, fmt.Errorf("error listing certificates: %s", err.Error())
 	}
 
-	var affected []*v1alpha2.ClusterIssuer
+	var affected []*v1.ClusterIssuer
 	for _, iss := range issuers {
 		if secret.Namespace != c.clusterResourceNamespace {
 			continue

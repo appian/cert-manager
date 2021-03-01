@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 
 // ContextWithStopCh will wrap a context with a stop channel.
 // When the provided stopCh closes, the cancel() will be called on the context.
-// This provides a convinient way to represent a stop channel as a context.
+// This provides a convenient way to represent a stop channel as a context.
 func ContextWithStopCh(ctx context.Context, stopCh <-chan struct{}) context.Context {
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {

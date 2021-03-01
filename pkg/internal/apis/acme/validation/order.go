@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/internal/apis/acme"
 )
 
 func ValidateOrderUpdate(oldObj, newObj runtime.Object) field.ErrorList {
@@ -41,8 +41,8 @@ func ValidateOrderUpdate(oldObj, newObj runtime.Object) field.ErrorList {
 
 func ValidateOrderSpecUpdate(old, new cmacme.OrderSpec, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
-	if len(old.CSR) > 0 && bytes.Compare(old.CSR, new.CSR) != 0 {
-		el = append(el, field.Forbidden(fldPath.Child("csr"), "field is immutable once set"))
+	if len(old.Request) > 0 && bytes.Compare(old.Request, new.Request) != 0 {
+		el = append(el, field.Forbidden(fldPath.Child("request"), "field is immutable once set"))
 	}
 	return el
 }
@@ -89,6 +89,9 @@ func ValidateOrderStatusUpdate(old, new cmacme.OrderStatus, fldPath *field.Path)
 			// old value is nil
 			if old.Wildcard != nil && (new.Wildcard == nil || *old.Wildcard != *new.Wildcard) {
 				el = append(el, field.Forbidden(fldPath.Child("wildcard"), "field is immutable once set"))
+			}
+			if old.InitialState != "" && (old.InitialState != new.InitialState) {
+				el = append(el, field.Forbidden(fldPath.Child("initialState"), "field is immutable once set"))
 			}
 
 			if len(old.Challenges) > 0 {

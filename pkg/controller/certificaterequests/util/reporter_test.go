@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import (
 	clocktesting "k8s.io/utils/clock/testing"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	controllertest "github.com/jetstack/cert-manager/pkg/controller/test"
 	"github.com/jetstack/cert-manager/pkg/util"
 	"github.com/jetstack/cert-manager/test/unit/gen"
@@ -68,6 +68,14 @@ func TestReporter(t *testing.T) {
 		LastTransitionTime: &nowMetaTime,
 	}
 
+	invalidRequestCondition := cmapi.CertificateRequestCondition{
+		Type:               cmapi.CertificateRequestConditionInvalidRequest,
+		Status:             "True",
+		Reason:             "InvalidRequest Reason",
+		Message:            "InvalidRequest Message",
+		LastTransitionTime: &nowMetaTime,
+	}
+
 	pendingCondition := cmapi.CertificateRequestCondition{
 		Type:               cmapi.CertificateRequestConditionReady,
 		Reason:             "Pending",
@@ -79,7 +87,7 @@ func TestReporter(t *testing.T) {
 	existingPendingCondition := cmapi.CertificateRequestCondition{
 		Type:               cmapi.CertificateRequestConditionReady,
 		Reason:             "Pending",
-		Message:            "Exisitng Pending Message",
+		Message:            "Existing Pending Message",
 		Status:             "False",
 		LastTransitionTime: &nowMetaTime,
 	}
@@ -123,6 +131,19 @@ func TestReporter(t *testing.T) {
 			expectedFailureTime: &oldMetaTime,
 
 			call: "failed",
+		},
+
+		"a report with invalid request should update the conditions and set FailureTime as it is nil": {
+			certificateRequest: gen.CertificateRequestFrom(baseCR),
+			err:                nil,
+			message:            "InvalidRequest Message",
+			reason:             "InvalidRequest Reason",
+
+			expectedEvents:      []string{},
+			expectedConditions:  []cmapi.CertificateRequestCondition{invalidRequestCondition},
+			expectedFailureTime: nil,
+
+			call: "invalid-request",
 		},
 
 		"a pending report should update the conditions and send an event as a Pending condition already exists": {
@@ -202,6 +223,8 @@ func (tt *reporterT) runTest(t *testing.T) {
 	case "failed":
 		reporter.Failed(tt.certificateRequest, tt.err,
 			tt.reason, tt.message)
+	case "invalid-request":
+		reporter.InvalidRequest(tt.certificateRequest, tt.reason, tt.message)
 	case "pending":
 		reporter.Pending(tt.certificateRequest, tt.err,
 			tt.reason, tt.message)

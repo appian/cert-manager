@@ -18,37 +18,31 @@ It is loosely based upon the work of [kube-lego](https://github.com/jetstack/kub
 and has borrowed some wisdom from other similar projects e.g.
 [kube-cert-manager](https://github.com/PalmStoneGames/kube-cert-manager).
 
-![cert-manager high level overview diagram](./docs/images/high-level-overview.svg)
-
-## Current status
-
-As this project is pre-1.0, we do not currently offer strong guarantees around our
-API stability.
-
-Notably, we may choose to make breaking changes to our API specification (i.e. the
-Issuer, ClusterIssuer and Certificate resources) in new minor releases.
-
-These will always be clearly documented in the [upgrade section of the documentation](https://docs.cert-manager.io/en/latest/admin/upgrading/index.html).
+![cert-manager high level overview diagram](https://cert-manager.io/images/high-level-overview.svg)
 
 ## Documentation
 
-Documentation for cert-manager can be found at [docs.cert-manager.io](https://docs.cert-manager.io/en/latest/).
+Documentation for cert-manager can be found at [cert-manager.io](https://cert-manager.io/docs/).
 Please make sure to select the correct version of the documentation to view on
-the bottom left of the page.
+the top right of the page.
+
+Issues and PRs towards the documentation should be filed in the [website repo](https://github.com/cert-manager/website/).
 
 For the common use-case of automatically issuing TLS certificates to
 Ingress resources, aka a [kube-lego](https://github.com/jetstack/kube-lego)
 replacement, see the [cert-manager nginx ingress quick start
-guide](docs/tutorials/acme/quick-start/index.rst).
+guide](https://cert-manager.io/docs/tutorials/acme/ingress/).
 
-See [Getting started](https://docs.cert-manager.io/en/latest/getting-started/)
-within the [documentation](https://docs.cert-manager.io/en/latest/)
+See [Installation](https://cert-manager.io/docs/installation/)
+within the [documentation](https://cert-manager.io/docs)
 for installation instructions.
 
 ## Troubleshooting
 
 If you encounter any issues whilst using cert-manager, we have a number of places you
 can use to try and get help.
+
+First of all we recommend looking at the [troubleshooting guide](https://cert-manager.io/docs/faq/troubleshooting/) of our documentation.
 
 The quickest way to ask a question is to first post on our Slack channel (#cert-manager)
 on the [Kubernetes Slack](http://slack.kubernetes.io/).
@@ -59,7 +53,7 @@ You can also try [searching for an existing issue](https://github.com/jetstack/c
 Properly searching for an existing issue will help reduce the number of duplicates,
 and help you find the answer you are looking for quicker.
 
-Please also make sure to read through the relevant pages in the [documentation](https://docs.cert-manager.io/en/latest/)
+Please also make sure to read through the relevant pages in the [documentation](https://cert-manager.io/docs/)
 before opening an issue. You can also search the documentation using the search box on the
 top left of the page.
 
@@ -72,13 +66,18 @@ Please be sure to include as much information as possible about your environment
 There is a Google Group used for project wide announcements and development coordination.
 Anybody can join the group by visiting [here](https://groups.google.com/forum/#!forum/cert-manager-dev)
 and clicking "Join Group". A Google account is required to join the group.
+Joining this group will also invite you to the cert-manager development meetings.
 
-Once you have become a member, you should receive an invite to the weekly development
-meeting, hosted on **Wednesdays at 4pm UTC** on Zoom.us.
+### Bi-weekly development meeting
+Once you have become a member, you should receive an invite to the bi-weekly development
+meeting, hosted on **Wednesdays at 5pm UK Time** on Google Meet.
 
-Anyone is welcome to join these calls, even if just to ask questions.
-
+Anyone is welcome to join these calls, even if just to ask questions.  
 Meeting notes are recorded in [Google docs](https://docs.google.com/document/d/1Tc5t6ylY9dhXAan1OjOoldeaoys1Yh4Ir710ATfBa5U).
+
+### Daily standups
+You are also welcome to join our daily standup every day at **10.30am UK Time** on Google Meet.
+Invites are sent via the [Google Group](https://groups.google.com/forum/#!forum/cert-manager-dev)
 
 ## Contributing
 
@@ -92,7 +91,7 @@ if you are unsure where to start with getting involved!
 We also use the #cert-manager channel on kubernetes.slack.com for chat relating to
 the project.
 
-Developer documentation is available in the [official documentation](https://docs.cert-manager.io/en/latest/devel/index.html).
+Developer documentation is available in the [official documentation](https://cert-manager.io/docs/contributing/).
 
 ## Changelog
 

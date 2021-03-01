@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,61 +26,82 @@ import (
 
 // Challenge is a type to represent a Challenge request with an ACME server
 type Challenge struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
-	Spec   ChallengeSpec   `json:"spec,omitempty"`
-	Status ChallengeStatus `json:"status,omitempty"`
+	Spec   ChallengeSpec
+	Status ChallengeStatus
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ChallengeList is a list of Challenges
 type ChallengeList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ListMeta
 
-	Items []Challenge `json:"items"`
+	Items []Challenge
 }
 
 type ChallengeSpec struct {
-	// AuthzURL is the URL to the ACME Authorization resource that this
-	// challenge is a part of.
-	AuthzURL string `json:"authzURL"`
-
-	// Type is the type of ACME challenge this resource represents, e.g. "dns01"
-	// or "http01"
-	Type string `json:"type"`
-
-	// URL is the URL of the ACME Challenge resource for this challenge.
+	// The URL of the ACME Challenge resource for this challenge.
 	// This can be used to lookup details about the status of this challenge.
-	URL string `json:"url"`
+	URL string
 
-	// DNSName is the identifier that this challenge is for, e.g. example.com.
-	DNSName string `json:"dnsName"`
+	// The URL to the ACME Authorization resource that this
+	// challenge is a part of.
+	AuthorizationURL string
 
-	// Token is the ACME challenge token for this challenge.
-	Token string `json:"token"`
+	// dnsName is the identifier that this challenge is for, e.g. example.com.
+	// If the requested DNSName is a 'wildcard', this field MUST be set to the
+	// non-wildcard domain, e.g. for `*.example.com`, it must be `example.com`.
+	DNSName string
 
-	// Key is the ACME challenge key for this challenge
-	Key string `json:"key"`
+	// wildcard will be true if this challenge is for a wildcard identifier,
+	// for example '*.example.com'.
+	Wildcard bool
 
-	// Wildcard will be true if this challenge is for a wildcard identifier,
-	// for example '*.example.com'
-	// +optional
-	Wildcard bool `json:"wildcard"`
+	// The type of ACME challenge this resource represents.
+	// One of "HTTP-01" or "DNS-01".
+	Type ACMEChallengeType
 
-	// Solver contains the domain solving configuration that should be used to
+	// The ACME challenge token for this challenge.
+	// This is the raw value returned from the ACME server.
+	Token string
+
+	// The ACME challenge key for this challenge
+	// For HTTP01 challenges, this is the value that must be responded with to
+	// complete the HTTP01 challenge in the format:
+	// `<private key JWK thumbprint>.<key from acme server for challenge>`.
+	// For DNS01 challenges, this is the base64 encoded SHA256 sum of the
+	// `<private key JWK thumbprint>.<key from acme server for challenge>`
+	// text that must be set as the TXT record content.
+	Key string
+
+	// Contains the domain solving configuration that should be used to
 	// solve this challenge resource.
-	Solver *ACMEChallengeSolver `json:"solver,omitempty"`
+	Solver ACMEChallengeSolver
 
-	// IssuerRef references a properly configured ACME-type Issuer which should
+	// References a properly configured ACME-type Issuer which should
 	// be used to create this Challenge.
 	// If the Issuer does not exist, processing will be retried.
 	// If the Issuer is not an 'ACME' Issuer, an error will be returned and the
 	// Challenge will be marked as failed.
-	IssuerRef cmmeta.ObjectReference `json:"issuerRef"`
+	IssuerRef cmmeta.ObjectReference
 }
+
+// The type of ACME challenge. Only HTTP-01 and DNS-01 are supported.
+type ACMEChallengeType string
+
+const (
+	// ACMEChallengeTypeHTTP01 denotes a Challenge is of type http-01
+	// More info: https://letsencrypt.org/docs/challenge-types/#http-01-challenge
+	ACMEChallengeTypeHTTP01 ACMEChallengeType = "HTTP-01"
+
+	// ACMEChallengeTypeDNS01 denotes a Challenge is of type dns-01
+	// More info: https://letsencrypt.org/docs/challenge-types/#dns-01-challenge
+	ACMEChallengeTypeDNS01 ACMEChallengeType = "DNS-01"
+)
 
 type ChallengeStatus struct {
 	// Processing is used to denote whether this challenge should be processed
@@ -90,8 +111,7 @@ type ChallengeStatus struct {
 	// challenge has reached a final state or timed out.
 	// If this field is set to false, the challenge controller will not take
 	// any more action.
-	// +optional
-	Processing bool `json:"processing"`
+	Processing bool
 
 	// Presented will be set to true if the challenge values for this challenge
 	// are currently 'presented'.
@@ -99,16 +119,13 @@ type ChallengeStatus struct {
 	// have been 'submitted' for the appropriate challenge mechanism (i.e. the
 	// DNS01 TXT record has been presented, or the HTTP01 configuration has been
 	// configured).
-	// +optional
-	Presented bool `json:"presented"`
+	Presented bool
 
 	// Reason contains human readable information on why the Challenge is in the
 	// current state.
-	// +optional
-	Reason string `json:"reason"`
+	Reason string
 
 	// State contains the current 'state' of the challenge.
 	// If not set, the state of the challenge is unknown.
-	// +optional
-	State State `json:"state,omitempty"`
+	State State
 }

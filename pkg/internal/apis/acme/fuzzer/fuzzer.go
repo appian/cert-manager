@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import (
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/internal/apis/acme"
 )
 
@@ -32,14 +32,14 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			c.FuzzNoCustom(s) // fuzz self without calling this function again
 
 			if s.Spec.IssuerRef.Kind == "" {
-				s.Spec.IssuerRef.Kind = v1alpha2.IssuerKind
+				s.Spec.IssuerRef.Kind = v1.IssuerKind
 			}
 		},
 		func(s *acme.Challenge, c fuzz.Continue) {
 			c.FuzzNoCustom(s) // fuzz self without calling this function again
 
 			if s.Spec.IssuerRef.Kind == "" {
-				s.Spec.IssuerRef.Kind = v1alpha2.IssuerKind
+				s.Spec.IssuerRef.Kind = v1.IssuerKind
 			}
 		},
 		func(s *apiext.JSON, c fuzz.Continue) {

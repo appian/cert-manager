@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,46 +19,23 @@ package main
 import (
 	"flag"
 	"os"
-	"os/signal"
-	"syscall"
 
-	"k8s.io/klog"
-
+	"github.com/jetstack/cert-manager/cmd/controller/app"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
+	utilcmd "github.com/jetstack/cert-manager/pkg/util/cmd"
 )
 
 func main() {
 	logf.InitLogs(flag.CommandLine)
 	defer logf.FlushLogs()
 
-	stopCh := SetupSignalHandler()
-	cmd := NewCommandStartCertManagerController(stopCh)
+	stopCh := utilcmd.SetupSignalHandler()
+	cmd := app.NewCommandStartCertManagerController(stopCh)
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
 
 	flag.CommandLine.Parse([]string{})
 	if err := cmd.Execute(); err != nil {
-		klog.Info(err)
+		logf.Log.Error(err, "error executing command")
+		os.Exit(1)
 	}
-}
-
-var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
-var onlyOneSignalHandler = make(chan struct{})
-
-// SetupSignalHandler registered for SIGTERM and SIGINT. A stop channel is returned
-// which is closed on one of these signals. If a second signal is caught, the program
-// is terminated with exit code 1.
-func SetupSignalHandler() (stopCh <-chan struct{}) {
-	close(onlyOneSignalHandler) // panics when called twice
-
-	stop := make(chan struct{})
-	c := make(chan os.Signal, 2)
-	signal.Notify(c, shutdownSignals...)
-	go func() {
-		<-c
-		close(stop)
-		<-c
-		os.Exit(1) // second signal. Exit directly.
-	}()
-
-	return stop
 }

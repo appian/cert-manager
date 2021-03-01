@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,15 +23,16 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/jetstack/cert-manager/pkg/acme"
+	"github.com/jetstack/cert-manager/pkg/acme/accounts"
 	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
-	cmacmelisters "github.com/jetstack/cert-manager/pkg/client/listers/acme/v1alpha2"
-	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1alpha2"
+	cmacmelisters "github.com/jetstack/cert-manager/pkg/client/listers/acme/v1"
+	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/acmechallenges/scheduler"
 	"github.com/jetstack/cert-manager/pkg/issuer"
@@ -43,8 +44,9 @@ import (
 type controller struct {
 	// issuer helper is used to obtain references to issuers, used by Sync()
 	helper issuer.Helper
-	// acmehelper is used to obtain references to ACME clients
-	acmeHelper acme.Helper
+
+	// used to fetch ACME clients used in the controller
+	accountRegistry accounts.Getter
 
 	// all the listers used by this controller
 	challengeLister     cmacmelisters.ChallengeLister
@@ -75,9 +77,11 @@ type controller struct {
 	log logr.Logger
 
 	dns01Nameservers []string
+
+	DNS01CheckRetryPeriod time.Duration
 }
 
-func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, []controllerpkg.RunFunc, error) {
+func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, error) {
 	// construct a new named logger to be reused throughout the controller
 	c.log = logf.FromContext(ctx.RootContext, ControllerName)
 
@@ -85,14 +89,14 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	c.queue = workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(time.Second*5, time.Minute*30), ControllerName)
 
 	// obtain references to all the informers used by this controller
-	challengeInformer := ctx.SharedInformerFactory.Acme().V1alpha2().Challenges()
-	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().Issuers()
+	challengeInformer := ctx.SharedInformerFactory.Acme().V1().Challenges()
+	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1().Issuers()
 	secretInformer := ctx.KubeSharedInformerFactory.Core().V1().Secrets()
 	// we register these informers here so the HTTP01 solver has a synced
 	// cache when managing pod/service/ingress resources
 	podInformer := ctx.KubeSharedInformerFactory.Core().V1().Pods()
 	serviceInformer := ctx.KubeSharedInformerFactory.Core().V1().Services()
-	ingressInformer := ctx.KubeSharedInformerFactory.Extensions().V1beta1().Ingresses()
+	ingressInformer := ctx.KubeSharedInformerFactory.Networking().V1beta1().Ingresses()
 	// build a list of InformerSynced functions that will be returned by the Register method.
 	// the controller will only begin processing items once all of these informers have synced.
 	mustSync := []cache.InformerSynced{
@@ -112,7 +116,7 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	// if we are running in non-namespaced mode (i.e. --namespace=""), we also
 	// register event handlers and obtain a lister for clusterissuers.
 	if ctx.Namespace == "" {
-		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().ClusterIssuers()
+		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1().ClusterIssuers()
 		mustSync = append(mustSync, clusterIssuerInformer.Informer().HasSynced)
 		c.clusterIssuerLister = clusterIssuerInformer.Lister()
 	}
@@ -121,21 +125,23 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	challengeInformer.Informer().AddEventHandler(&controllerpkg.QueuingEventHandler{Queue: c.queue})
 
 	c.helper = issuer.NewHelper(c.issuerLister, c.clusterIssuerLister)
-	c.acmeHelper = acme.NewHelper(c.secretLister, ctx.ClusterResourceNamespace)
 	c.scheduler = scheduler.New(logf.NewContext(ctx.RootContext, c.log), c.challengeLister, ctx.SchedulerOptions.MaxConcurrentChallenges)
 	c.recorder = ctx.Recorder
 	c.cmClient = ctx.CMClient
 	c.httpSolver = http.NewSolver(ctx)
+	c.accountRegistry = ctx.ACMEOptions.AccountRegistry
+
 	var err error
 	c.dnsSolver, err = dns.NewSolver(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// read options from context
 	c.dns01Nameservers = ctx.ACMEOptions.DNS01Nameservers
+	c.DNS01CheckRetryPeriod = ctx.ACMEOptions.DNS01CheckRetryPeriod
 
-	return c.queue, mustSync, nil, nil
+	return c.queue, mustSync, nil
 }
 
 // MaxChallengesPerSchedule is the maximum number of challenges that can be
@@ -164,7 +170,7 @@ func (c *controller) runScheduler(ctx context.Context) {
 		ch = ch.DeepCopy()
 		ch.Status.Processing = true
 
-		_, err := c.cmClient.AcmeV1alpha2().Challenges(ch.Namespace).UpdateStatus(ch)
+		_, err := c.cmClient.AcmeV1().Challenges(ch.Namespace).UpdateStatus(context.TODO(), ch, metav1.UpdateOptions{})
 		if err != nil {
 			log.Error(err, "error scheduling challenge for processing")
 			return

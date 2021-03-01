@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
@@ -40,9 +40,9 @@ func podLabels(ch *cmacme.Challenge) map[string]string {
 		// this value should probably be hashed, and then the full plain text
 		// value stored as an annotation to make it easier for users to read
 		// see #425 for details: https://github.com/jetstack/cert-manager/issues/425
-		domainLabelKey:               domainHash,
-		tokenLabelKey:                tokenHash,
-		solverIdentificationLabelKey: solverIdent,
+		cmacme.DomainLabelKey:               domainHash,
+		cmacme.TokenLabelKey:                tokenHash,
+		cmacme.SolverIdentificationLabelKey: solverIdent,
 	}
 }
 
@@ -59,7 +59,7 @@ func (s *Solver) ensurePod(ctx context.Context, ch *cmacme.Challenge) (*corev1.P
 		return existingPods[0], nil
 	}
 	if len(existingPods) > 1 {
-		log.Info("multiple challenge solver pods found for challenge. cleaning up all existing pods.")
+		log.V(logf.InfoLevel).Info("multiple challenge solver pods found for challenge. cleaning up all existing pods.")
 		err := s.cleanupPods(ctx, ch)
 		if err != nil {
 			return nil, err
@@ -67,7 +67,7 @@ func (s *Solver) ensurePod(ctx context.Context, ch *cmacme.Challenge) (*corev1.P
 		return nil, fmt.Errorf("multiple existing challenge solver pods found and cleaned up. retrying challenge sync")
 	}
 
-	log.Info("creating HTTP01 challenge solver pod")
+	log.V(logf.InfoLevel).Info("creating HTTP01 challenge solver pod")
 
 	return s.createPod(ch)
 }
@@ -115,15 +115,15 @@ func (s *Solver) cleanupPods(ctx context.Context, ch *cmacme.Challenge) error {
 	var errs []error
 	for _, pod := range pods {
 		log := logf.WithRelatedResource(log, pod).V(logf.DebugLevel)
-		log.Info("deleting pod resource")
+		log.V(logf.InfoLevel).Info("deleting pod resource")
 
-		err := s.Client.CoreV1().Pods(pod.Namespace).Delete(pod.Name, nil)
+		err := s.Client.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
 		if err != nil {
-			log.Info("failed to delete pod resource", "error", err)
+			log.V(logf.WarnLevel).Info("failed to delete pod resource", "error", err)
 			errs = append(errs, err)
 			continue
 		}
-		log.Info("successfully deleted pod resource")
+		log.V(logf.InfoLevel).Info("successfully deleted pod resource")
 	}
 
 	return utilerrors.NewAggregate(errs)
@@ -133,7 +133,9 @@ func (s *Solver) cleanupPods(ctx context.Context, ch *cmacme.Challenge) error {
 // domain, token and key.
 func (s *Solver) createPod(ch *cmacme.Challenge) (*corev1.Pod, error) {
 	return s.Client.CoreV1().Pods(ch.Namespace).Create(
-		s.buildPod(ch))
+		context.TODO(),
+		s.buildPod(ch),
+		metav1.CreateOptions{})
 }
 
 // buildPod will build a challenge solving pod for the given certificate,
@@ -142,8 +144,7 @@ func (s *Solver) buildPod(ch *cmacme.Challenge) *corev1.Pod {
 	pod := s.buildDefaultPod(ch)
 
 	// Override defaults if they have changed in the pod template.
-	if ch.Spec.Solver != nil &&
-		ch.Spec.Solver.HTTP01 != nil &&
+	if ch.Spec.Solver.HTTP01 != nil &&
 		ch.Spec.Solver.HTTP01.Ingress != nil {
 		pod = s.mergePodObjectMetaWithPodTemplate(pod,
 			ch.Spec.Solver.HTTP01.Ingress.PodTemplate)
@@ -242,6 +243,14 @@ func (s *Solver) mergePodObjectMetaWithPodTemplate(pod *corev1.Pod, podTempl *cm
 
 	if podTempl.Spec.Affinity != nil {
 		pod.Spec.Affinity = podTempl.Spec.Affinity
+	}
+
+	if podTempl.Spec.PriorityClassName != "" {
+		pod.Spec.PriorityClassName = podTempl.Spec.PriorityClassName
+	}
+
+	if podTempl.Spec.ServiceAccountName != "" {
+		pod.Spec.ServiceAccountName = podTempl.Spec.ServiceAccountName
 	}
 
 	return pod

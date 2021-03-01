@@ -1,4 +1,4 @@
-# Copyright 2019 The Jetstack cert-manager contributors.
+# Copyright 2020 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,21 +17,13 @@ load("@bazel_gazelle//:deps.bzl", "go_repository")
 
 # Defines Bazel WORKSPACE targets that are used during e2e tests
 def install():
-    container_pull(
-        name = "io_gcr_helm_tiller",
-        registry = "gcr.io",
-        repository = "kubernetes-helm/tiller",
-        tag = "v2.15.1",
-        digest = "sha256:39bb81aa9299390ef1d9e472531da24e98234db46664e431001a5fd6d0611114",
-    )
-
     ## Fetch pebble for use during e2e tests
     ## You can change the version of Pebble used for tests by changing the 'commit'
     ## field in this rule
     go_repository(
         name = "org_letsencrypt_pebble",
-        commit = "930cc9b6f9ecfb81d755a949cc525d515893ee0f",
-        remote = "https://github.com/munnerz/pebble",
+        commit = "abe2768b4c05f15dcde7626b484a7fdf1165a73a",
+        remote = "https://github.com/letsencrypt/pebble",
         vcs = "git",
         importpath = "github.com/letsencrypt/pebble",
         build_external = "vendored",
@@ -45,20 +37,10 @@ def install():
     ## 'tag' field in this rule
     container_pull(
         name = "io_kubernetes_ingress-nginx",
-        registry = "quay.io",
-        repository = "kubernetes-ingress-controller/nginx-ingress-controller",
-        tag = "0.26.1",
-        # For some reason, the suggested sha256 returns an error when fetched from
-        # quay.io by digest.
-        # digest = "sha256:f7f08fdbbeddaf3179829c662da360a3feac1ecf8c4b1305949fffd8c8f59879",
-    )
-
-    container_pull(
-        name = "io_gcr_k8s_defaultbackend",
         registry = "k8s.gcr.io",
-        repository = "defaultbackend-amd64",
-        tag = "1.5",
-        digest = "sha256:4dc5e07c8ca4e23bddb3153737d7b8c556e5fb2f29c4558b7cd6e6df99c512c7",
+        repository = "ingress-nginx/controller",
+        tag = "v0.41.2",
+        digest = "sha256:e11b7d264cac4cfc7566b78bb150c94168ea4612a4e9769ca549eb03469db906",
     )
 
     ## Fetch vault for use during e2e tests
@@ -70,4 +52,22 @@ def install():
         repository = "library/vault",
         tag = "1.2.3",
         digest = "sha256:b1c86c9e173f15bb4a926e4144a63f7779531c30554ac7aee9b2a408b22b2c01"
+    )
+
+    ## Fetch bind for use during e2e tests
+    container_pull(
+        name = "io_docker_index_sameersbn_bind",
+        registry = "index.docker.io",
+        repository = "sameersbn/bind",
+        tag = "9.11.3-20190706",
+        digest = "sha256:b8e84f9a9fe0c05c3a963606c3d0170622be9c5e8800431ffcaadb0c79a3ff75"
+    )
+
+    ## Fetch sample-external-issuer for use during e2e tests
+    container_pull(
+        name = "io_ghcr_wallrj_sample-external-issuer_controller",
+        registry = "ghcr.io",
+        repository = "wallrj/sample-external-issuer/controller",
+        tag = "v0.0.0-30-gf333b9e",
+        digest = "sha256:609a12fca03554a186e516ef065b4152f02596fba697e3cc45f3593654c87a86"
     )

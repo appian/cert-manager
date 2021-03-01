@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,4 +17,4 @@ limitations under the License.
 package util
 
 // CertManagerUserAgent is the user agent that http clients in this codebase should use
-var CertManagerUserAgent = "jetstack-cert-manager/" + version()
+var CertManagerUserAgent = "cert-manager/" + version()

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package dns
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,11 +39,8 @@ var (
 )
 
 func (f *fixture) setupNamespace(t *testing.T, name string) (string, func()) {
-	if _, err := f.clientset.CoreV1().Namespaces().Create(&corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-	}); err != nil {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if _, err := f.clientset.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("error creating test namespace %q: %v", name, err)
 	}
 
@@ -78,7 +76,7 @@ func (f *fixture) setupNamespace(t *testing.T, name string) (string, func()) {
 	}
 
 	return name, func() {
-		f.clientset.CoreV1().Namespaces().Delete(name, nil)
+		f.clientset.CoreV1().Namespaces().Delete(context.TODO(), name, metav1.DeleteOptions{})
 	}
 }
 

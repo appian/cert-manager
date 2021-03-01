@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	certmanager "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	certmanager "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
@@ -86,6 +86,8 @@ type Injectable interface {
 type CertInjector interface {
 	// NewTarget creates a new InjectTarget containing an empty underlying object.
 	NewTarget() InjectTarget
+	// IsAlpha tells the client to disregard "no matching kind" type of errors
+	IsAlpha() bool
 }
 
 // genericInjectReconciler is a reconciler that knows how to check if a given object is
@@ -129,13 +131,13 @@ func (r *genericInjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	if err := r.Client.Get(ctx, req.NamespacedName, target.AsObject()); err != nil {
 		if dropNotFound(err) == nil {
 			// don't requeue on deletions, which yield a non-found object
+			log.V(logf.DebugLevel).Info("ignoring", "reason", "not found", "err", err)
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "unable to fetch target object to inject into")
 		return ctrl.Result{}, err
 	}
 
-	// ensure that it wants injection
 	metaObj, err := meta.Accessor(target.AsObject())
 	if err != nil {
 		log.Error(err, "unable to get metadata for object")
@@ -143,9 +145,16 @@ func (r *genericInjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	}
 	log = logf.WithResource(r.log, metaObj)
 
+	// ignore resources that are being deleted
+	if !metaObj.GetDeletionTimestamp().IsZero() {
+		log.V(logf.DebugLevel).Info("ignoring", "reason", "object has a non-zero deletion timestamp")
+		return ctrl.Result{}, nil
+	}
+
+	// ensure that it wants injection
 	dataSource, err := r.caDataSourceFor(log, metaObj)
 	if err != nil {
-		log.V(4).Info("failed to determine ca data source for injectable")
+		log.V(logf.DebugLevel).Info("failed to determine ca data source for injectable")
 		return ctrl.Result{}, nil
 	}
 
@@ -155,7 +164,7 @@ func (r *genericInjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		return ctrl.Result{}, err
 	}
 	if caData == nil {
-		log.Info("could not find any ca data in data source for target")
+		log.V(logf.InfoLevel).Info("could not find any ca data in data source for target")
 		return ctrl.Result{}, nil
 	}
 
@@ -167,7 +176,7 @@ func (r *genericInjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		log.Error(err, "unable to update target object with new CA data")
 		return ctrl.Result{}, err
 	}
-	log.V(1).Info("updated object")
+	log.V(logf.InfoLevel).Info("updated object")
 
 	return ctrl.Result{}, nil
 }

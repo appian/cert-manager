@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,16 +19,20 @@ package cainjector
 import (
 	"context"
 
+	logf "github.com/jetstack/cert-manager/pkg/logs"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 )
 
@@ -50,8 +54,8 @@ type caDataSource interface {
 	// failed to read.
 	ReadCA(ctx context.Context, log logr.Logger, metaObj metav1.Object) (ca []byte, err error)
 
-	// ApplyTo applies any required watchers to the given controller builder.
-	ApplyTo(mgr ctrl.Manager, setup injectorSetup, builder *ctrl.Builder) error
+	// ApplyTo applies any required watchers to the given controller.
+	ApplyTo(mgr ctrl.Manager, setup injectorSetup, controller controller.Controller, ca cache.Cache) error
 }
 
 // kubeconfigDataSource reads the ca bundle provided as part of the struct
@@ -69,7 +73,7 @@ func (c *kubeconfigDataSource) ReadCA(ctx context.Context, log logr.Logger, meta
 	return c.apiserverCABundle, nil
 }
 
-func (c *kubeconfigDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, builder *ctrl.Builder) error {
+func (c *kubeconfigDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, _ controller.Controller, _ cache.Cache) error {
 	cfg := mgr.GetConfig()
 	caBundle, err := dataFromSliceOrFile(cfg.CAData, cfg.CAFile)
 	if err != nil {
@@ -83,7 +87,7 @@ func (c *kubeconfigDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, bu
 // the 'cert-manager.io/inject-ca-from' annotation in the form
 // 'namespace/name'.
 type certificateDataSource struct {
-	client client.Client
+	client client.Reader
 }
 
 func (c *certificateDataSource) Configured(log logr.Logger, metaObj metav1.Object) bool {
@@ -91,7 +95,7 @@ func (c *certificateDataSource) Configured(log logr.Logger, metaObj metav1.Objec
 	if !ok {
 		return false
 	}
-	log.Info("Extracting CA from Certificate resource", "certificate", certNameRaw)
+	log.V(logf.DebugLevel).Info("Extracting CA from Certificate resource", "certificate", certNameRaw)
 	return true
 }
 
@@ -100,7 +104,7 @@ func (c *certificateDataSource) ReadCA(ctx context.Context, log logr.Logger, met
 	certName := splitNamespacedName(certNameRaw)
 	log = log.WithValues("certificate", certName)
 	if certName.Namespace == "" {
-		log.Error(nil, "invalid certificate name")
+		log.Error(nil, "invalid certificate name; needs a namespace/ prefix")
 		// don't return an error, requeuing won't help till this is changed
 		return nil, nil
 	}
@@ -123,7 +127,7 @@ func (c *certificateDataSource) ReadCA(ctx context.Context, log logr.Logger, met
 	}
 	owner := OwningCertForSecret(&secret)
 	if owner == nil || *owner != certName {
-		log.Info("refusing to target secret not owned by certificate", "owner", metav1.GetControllerOf(&secret))
+		log.V(logf.WarnLevel).Info("refusing to target secret not owned by certificate", "owner", metav1.GetControllerOf(&secret))
 		return nil, nil
 	}
 
@@ -138,26 +142,30 @@ func (c *certificateDataSource) ReadCA(ctx context.Context, log logr.Logger, met
 	return caData, nil
 }
 
-func (c *certificateDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, builder *ctrl.Builder) error {
+func (c *certificateDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, controller controller.Controller, ca cache.Cache) error {
 	typ := setup.injector.NewTarget().AsObject()
-	if err := mgr.GetFieldIndexer().IndexField(typ, injectFromPath, injectableCAFromIndexer); err != nil {
+	if err := ca.IndexField(context.TODO(), typ, injectFromPath, injectableCAFromIndexer); err != nil {
 		return err
 	}
 
-	builder.Watches(&source.Kind{Type: &cmapi.Certificate{}},
+	if err := controller.Watch(source.NewKindWithCache(&cmapi.Certificate{}, ca),
 		&handler.EnqueueRequestsFromMapFunc{ToRequests: &certMapper{
-			Client:       mgr.GetClient(),
+			Client:       ca,
 			log:          ctrl.Log.WithName("cert-mapper"),
 			toInjectable: buildCertToInjectableFunc(setup.listType, setup.resourceName),
 		}},
-	).
-		Watches(&source.Kind{Type: &corev1.Secret{}},
-			&handler.EnqueueRequestsFromMapFunc{ToRequests: &secretForCertificateMapper{
-				Client:                  mgr.GetClient(),
-				log:                     ctrl.Log.WithName("secret-for-certificate-mapper"),
-				certificateToInjectable: buildCertToInjectableFunc(setup.listType, setup.resourceName),
-			}},
-		)
+	); err != nil {
+		return err
+	}
+	if err := controller.Watch(source.NewKindWithCache(&corev1.Secret{}, ca),
+		&handler.EnqueueRequestsFromMapFunc{ToRequests: &secretForCertificateMapper{
+			Client:                  ca,
+			log:                     ctrl.Log.WithName("secret-for-certificate-mapper"),
+			certificateToInjectable: buildCertToInjectableFunc(setup.listType, setup.resourceName),
+		}},
+	); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -165,7 +173,7 @@ func (c *certificateDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, b
 // 'cert-manager.io/inject-ca-from-secret' annotation in the form
 // 'namespace/name'.
 type secretDataSource struct {
-	client client.Client
+	client client.Reader
 }
 
 func (c *secretDataSource) Configured(log logr.Logger, metaObj metav1.Object) bool {
@@ -173,7 +181,7 @@ func (c *secretDataSource) Configured(log logr.Logger, metaObj metav1.Object) bo
 	if !ok {
 		return false
 	}
-	log.Info("Extracting CA from Secret resource", "secret", secretNameRaw)
+	log.V(logf.DebugLevel).Info("Extracting CA from Secret resource", "secret", secretNameRaw)
 	return true
 }
 
@@ -196,7 +204,7 @@ func (c *secretDataSource) ReadCA(ctx context.Context, log logr.Logger, metaObj 
 	}
 
 	if secret.Annotations == nil || secret.Annotations[cmapi.AllowsInjectionFromSecretAnnotation] != "true" {
-		log.Info("Secret resource does not allow direct injection - refusing to inject CA")
+		log.V(logf.WarnLevel).Info("Secret resource does not allow direct injection - refusing to inject CA")
 		return nil, nil
 	}
 
@@ -211,18 +219,19 @@ func (c *secretDataSource) ReadCA(ctx context.Context, log logr.Logger, metaObj 
 	return caData, nil
 }
 
-func (c *secretDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, builder *ctrl.Builder) error {
+func (c *secretDataSource) ApplyTo(mgr ctrl.Manager, setup injectorSetup, controller controller.Controller, ca cache.Cache) error {
 	typ := setup.injector.NewTarget().AsObject()
-	if err := mgr.GetFieldIndexer().IndexField(typ, injectFromSecretPath, injectableCAFromSecretIndexer); err != nil {
+	if err := ca.IndexField(context.TODO(), typ, injectFromSecretPath, injectableCAFromSecretIndexer); err != nil {
 		return err
 	}
-
-	builder.Watches(&source.Kind{Type: &corev1.Secret{}},
+	if err := controller.Watch(source.NewKindWithCache(&corev1.Secret{}, ca),
 		&handler.EnqueueRequestsFromMapFunc{ToRequests: &secretForInjectableMapper{
-			Client:             mgr.GetClient(),
+			Client:             ca,
 			log:                ctrl.Log.WithName("secret-mapper"),
 			secretToInjectable: buildSecretToInjectableFunc(setup.listType, setup.resourceName),
 		}},
-	)
+	); err != nil {
+		return err
+	}
 	return nil
 }

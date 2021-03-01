@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,20 +17,16 @@ limitations under the License.
 package venafi
 
 import (
+	"github.com/go-logr/logr"
+
 	corelisters "k8s.io/client-go/listers/core/v1"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
-	"github.com/jetstack/cert-manager/pkg/internal/venafi"
 	"github.com/jetstack/cert-manager/pkg/issuer"
-)
-
-const (
-	tppUsernameKey = "username"
-	tppPasswordKey = "password"
-
-	defaultAPIKeyKey = "api-key"
+	"github.com/jetstack/cert-manager/pkg/issuer/venafi/client"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 // Venafi is a implementation of govcert library to manager certificates from TPP or Venafi Cloud
@@ -45,7 +41,9 @@ type Venafi struct {
 	// For ClusterIssuers, this will be the cluster resource namespace.
 	resourceNamespace string
 
-	clientBuilder venafi.VenafiClientBuilder
+	clientBuilder client.VenafiClientBuilder
+
+	log logr.Logger
 }
 
 func NewVenafi(ctx *controller.Context, issuer cmapi.GenericIssuer) (issuer.Interface, error) {
@@ -53,8 +51,9 @@ func NewVenafi(ctx *controller.Context, issuer cmapi.GenericIssuer) (issuer.Inte
 		issuer:            issuer,
 		secretsLister:     ctx.KubeSharedInformerFactory.Core().V1().Secrets().Lister(),
 		resourceNamespace: ctx.IssuerOptions.ResourceNamespace(issuer),
-		clientBuilder:     venafi.New,
+		clientBuilder:     client.New,
 		Context:           ctx,
+		log:               logf.Log.WithName("venafi"),
 	}, nil
 }
 

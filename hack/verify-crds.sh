@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2019 The Jetstack cert-manager contributors.
+# Copyright 2020 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ set -o errexit
 set -o pipefail
 
 if [[ -n "${TEST_WORKSPACE:-}" ]]; then # Running inside bazel
-  echo "Verifyig generated CRD manifests are up-to-date..." >&2
+  echo "Verifying generated CRD manifests are up-to-date..." >&2
 elif ! command -v bazel &>/dev/null; then
   echo "Install bazel at https://bazel.build" >&2
   exit 1

@@ -1,4 +1,4 @@
-# Copyright 2019 The Jetstack cert-manager contributors.
+# Copyright 2020 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,25 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Set DOCKER_REPO to customise the image docker repo, e.g. "quay.io/jetstack"
-DOCKER_REPO :=
-APP_VERSION := canary
+# Set DOCKER_REGISTRY to customise the image docker repo, e.g. "quay.io/jetstack"
+DOCKER_REGISTRY :=
+APP_VERSION :=
 HACK_DIR ?= hack
-
-SKIP_GLOBALS := false
-# Skip Venafi tests whilst there are issues with the TPP server
-GINKGO_SKIP := Venafi
-GINKGO_FOCUS :=
-
-## e2e test vars
-KUBECTL ?= kubectl
-KUBECONFIG ?= $$HOME/.kube/config
-FLAKE_ATTEMPTS ?= 1
 
 # Get a list of all binaries to be built
 CMDS := $(shell find ./cmd/ -maxdepth 1 -type d -exec basename {} \; | grep -v cmd)
 
-.PHONY: help build verify push $(CMDS) e2e_test images images_push \
+.PHONY: help build verify push $(CMDS) images images_push \
 	verify_deps verify_chart
 
 help:
@@ -52,20 +42,18 @@ help:
 	# cainjector         - build a binary of the 'cainjector'
 	# webhook            - build a binary of the 'webhook'
 	# acmesolver         - build a binary of the 'acmesolver'
-	# e2e_test           - builds and runs end-to-end tests.
-	#                      NOTE: you probably want to execute ./hack/ci/run-e2e-kind.sh instead of this target
 	# images             - builds docker images for all of the components, saving them in your Docker daemon
 	# images_push        - pushes docker images to the target registry
 	#
-	# Image targets can be run with optional args DOCKER_REPO and DOCKER_TAG:
+	# Image targets can be run with optional args DOCKER_REGISTRY and APP_VERSION:
 	#
-	#     make images DOCKER_REPO=quay.io/yourusername APP_VERSION=v0.11.0-dev.my-feature
+	#     make images DOCKER_REGISTRY=quay.io/yourusername APP_VERSION=v0.11.0-dev.my-feature
 	#
 
 # Alias targets
 ###############
 
-build: images
+build: ctl images
 push: docker_push
 
 verify:
@@ -86,24 +74,6 @@ $(CMDS):
 	bazel build \
 		//cmd/$@
 
-e2e_test:
-	mkdir -p "$$(pwd)/_artifacts"
-	bazel build //hack/bin:helm //test/e2e:e2e.test
-	# Run e2e tests
-	KUBECONFIG=$(KUBECONFIG) \
-		bazel run @com_github_onsi_ginkgo//ginkgo -- \
-			-nodes 10 \
-			-flakeAttempts $(FLAKE_ATTEMPTS) \
-			$$(bazel info bazel-genfiles)/test/e2e/e2e.test \
-			-- \
-			--helm-binary-path=$$(bazel info bazel-genfiles)/hack/bin/helm \
-			--repo-root="$$(pwd)" \
-			--report-dir="$${ARTIFACTS:-./_artifacts}" \
-			--ginkgo.skip="$(GINKGO_SKIP)" \
-			--ginkgo.focus="$(GINKGO_FOCUS)" \
-			--skip-globals=$(SKIP_GLOBALS) \
-			--kubectl-path="$(KUBECTL)"
-
 # Generate targets
 ##################
 generate:
@@ -112,18 +82,12 @@ generate:
 # Docker targets
 ################
 images:
-	bazel run //hack/release -- \
-		--repo-root "$$(pwd)" \
-		--images \
-		--images.export=true \
-		--images.goarch="amd64" \
-		--app-version="$(APP_VERSION)" \
-		--docker-repo="$(DOCKER_REPO)"
+	APP_VERSION=$(APP_VERSION) \
+	DOCKER_REGISTRY=$(DOCKER_REPO) \
+	bazel run \
+		--stamp \
+		--platforms=@io_bazel_rules_go//go/toolchain:linux_amd64 \
+		//build:server-images
 
-images_push: images
-	bazel run //hack/release -- \
-		--repo-root "$$(pwd)" \
-		--images \
-		--publish \
-		--app-version="$(APP_VERSION)" \
-		--docker-repo="$(DOCKER_REPO)"
+ctl:
+	bazel build //cmd/ctl

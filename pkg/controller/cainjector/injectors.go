@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,6 +32,10 @@ import (
 // mutatingWebhookInjector knows how to create an InjectTarget a MutatingWebhookConfiguration.
 type mutatingWebhookInjector struct{}
 
+func (i mutatingWebhookInjector) IsAlpha() bool {
+	return false
+}
+
 func (i mutatingWebhookInjector) NewTarget() InjectTarget {
 	return &mutatingWebhookTarget{}
 }
@@ -58,6 +62,10 @@ func (i validatingWebhookInjector) NewTarget() InjectTarget {
 	return &validatingWebhookTarget{}
 }
 
+func (i validatingWebhookInjector) IsAlpha() bool {
+	return false
+}
+
 // validatingWebhookTarget knows how to set CA data for all the webhooks
 // in a validatingWebhookConfiguration.
 type validatingWebhookTarget struct {
@@ -67,6 +75,7 @@ type validatingWebhookTarget struct {
 func (t *validatingWebhookTarget) AsObject() runtime.Object {
 	return &t.obj
 }
+
 func (t *validatingWebhookTarget) SetCA(data []byte) {
 	for ind := range t.obj.Webhooks {
 		t.obj.Webhooks[ind].ClientConfig.CABundle = data
@@ -80,6 +89,10 @@ func (i apiServiceInjector) NewTarget() InjectTarget {
 	return &apiServiceTarget{}
 }
 
+func (i apiServiceInjector) IsAlpha() bool {
+	return false
+}
+
 // apiServiceTarget knows how to set CA data for the CA bundle in
 // the APIService.
 type apiServiceTarget struct {
@@ -89,6 +102,7 @@ type apiServiceTarget struct {
 func (t *apiServiceTarget) AsObject() runtime.Object {
 	return &t.obj
 }
+
 func (t *apiServiceTarget) SetCA(data []byte) {
 	t.obj.Spec.CABundle = data
 }
@@ -101,6 +115,10 @@ func (i crdConversionInjector) NewTarget() InjectTarget {
 	return &crdConversionTarget{}
 }
 
+func (i crdConversionInjector) IsAlpha() bool {
+	return false
+}
+
 // crdConversionTarget knows how to set CA data for the conversion webhook in CRDs
 type crdConversionTarget struct {
 	obj apiext.CustomResourceDefinition
@@ -109,6 +127,7 @@ type crdConversionTarget struct {
 func (t *crdConversionTarget) AsObject() runtime.Object {
 	return &t.obj
 }
+
 func (t *crdConversionTarget) SetCA(data []byte) {
 	if t.obj.Spec.Conversion == nil || t.obj.Spec.Conversion.Strategy != apiext.WebhookConverter {
 		return

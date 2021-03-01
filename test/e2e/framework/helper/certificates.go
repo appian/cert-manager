@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package helper
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
@@ -25,11 +26,12 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/pkg/util"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
@@ -44,7 +46,7 @@ func (h *Helper) WaitForCertificateReady(ns, name string, timeout time.Duration)
 		func() (bool, error) {
 			var err error
 			log.Logf("Waiting for Certificate %v to be ready", name)
-			certificate, err = h.CMClient.CertmanagerV1alpha2().Certificates(ns).Get(name, metav1.GetOptions{})
+			certificate, err = h.CMClient.CertmanagerV1().Certificates(ns).Get(context.TODO(), name, metav1.GetOptions{})
 			if err != nil {
 				return false, fmt.Errorf("error getting Certificate %v: %v", name, err)
 			}
@@ -72,7 +74,7 @@ func (h *Helper) WaitForCertificateNotReady(ns, name string, timeout time.Durati
 		func() (bool, error) {
 			var err error
 			log.Logf("Waiting for Certificate %v to be ready", name)
-			certificate, err = h.CMClient.CertmanagerV1alpha2().Certificates(ns).Get(name, metav1.GetOptions{})
+			certificate, err = h.CMClient.CertmanagerV1().Certificates(ns).Get(context.TODO(), name, metav1.GetOptions{})
 			if err != nil {
 				return false, fmt.Errorf("error getting Certificate %v: %v", name, err)
 			}
@@ -97,7 +99,7 @@ func (h *Helper) WaitForCertificateNotReady(ns, name string, timeout time.Durati
 // correct as defined by the Certificate's spec.
 func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootCAPEM []byte) (*x509.Certificate, error) {
 	log.Logf("Getting the TLS certificate Secret resource")
-	secret, err := h.KubeClient.CoreV1().Secrets(certificate.Namespace).Get(certificate.Spec.SecretName, metav1.GetOptions{})
+	secret, err := h.KubeClient.CoreV1().Secrets(certificate.Namespace).Get(context.TODO(), certificate.Spec.SecretName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +117,12 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 	}
 
 	// validate private key is of the correct type (rsa or ecdsa)
-	switch certificate.Spec.KeyAlgorithm {
-	case cmapi.KeyAlgorithm(""),
+	privateKey := certificate.Spec.PrivateKey
+	if privateKey == nil {
+		privateKey = &cmapi.CertificatePrivateKey{}
+	}
+	switch privateKey.Algorithm {
+	case cmapi.PrivateKeyAlgorithm(""),
 		cmapi.RSAKeyAlgorithm:
 		_, ok := key.(*rsa.PrivateKey)
 		if !ok {
@@ -128,7 +134,7 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 			return nil, fmt.Errorf("Expected private key of type ECDSA, but it was: %T", key)
 		}
 	default:
-		return nil, fmt.Errorf("unrecognised requested private key algorithm %q", certificate.Spec.KeyAlgorithm)
+		return nil, fmt.Errorf("unrecognised requested private key algorithm %q", certificate.Spec.PrivateKey.Algorithm)
 	}
 
 	// TODO: validate private key KeySize
@@ -136,6 +142,7 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 	// check the provided certificate is valid
 	expectedOrganization := pki.OrganizationForCertificate(certificate)
 	expectedDNSNames := certificate.Spec.DNSNames
+	expectedIPAddresses := certificate.Spec.IPAddresses
 	uris, err := pki.URIsForCertificate(certificate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URIs: %s", err)
@@ -156,7 +163,8 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 	commonNameCorrect := true
 	expectedCN := certificate.Spec.CommonName
 	if len(expectedCN) == 0 && len(cert.Subject.CommonName) > 0 {
-		if !util.Contains(cert.DNSNames, cert.Subject.CommonName) {
+		// issuers might set an IP or DNSName as CN
+		if !util.Contains(cert.DNSNames, cert.Subject.CommonName) && !util.Contains(pki.IPAddressesToString(cert.IPAddresses), cert.Subject.CommonName) {
 			commonNameCorrect = false
 		}
 	} else if expectedCN != cert.Subject.CommonName {
@@ -164,9 +172,10 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 	}
 
 	if !commonNameCorrect || !util.Subset(cert.DNSNames, expectedDNSNames) || !util.EqualUnsorted(pki.URLsToString(cert.URIs), expectedURIs) ||
+		!util.Subset(pki.IPAddressesToString(cert.IPAddresses), expectedIPAddresses) ||
 		!(len(cert.Subject.Organization) == 0 || util.EqualUnsorted(cert.Subject.Organization, expectedOrganization)) {
-		return nil, fmt.Errorf("Expected certificate valid for CN %q, O %v, dnsNames %v, uriSANs %v,but got a certificate valid for CN %q, O %v, dnsNames %v, uriSANs %v",
-			expectedCN, expectedOrganization, expectedDNSNames, expectedURIs, cert.Subject.CommonName, cert.Subject.Organization, cert.DNSNames, cert.URIs)
+		return nil, fmt.Errorf("Expected certificate valid for CN %q, O %v, dnsNames %v, uriSANs %v,but got a certificate valid for CN %q, O %v, dnsNames %v, uriSANs %v, ipAddresses %v",
+			expectedCN, expectedOrganization, expectedDNSNames, expectedURIs, cert.Subject.CommonName, cert.Subject.Organization, cert.DNSNames, cert.URIs, cert.IPAddresses)
 	}
 
 	if certificate.Status.NotAfter == nil {
@@ -199,7 +208,7 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 	certificateExtKeyUsages = append(certificateExtKeyUsages, defaultCertExtKeyUsages...)
 
 	// If using ECDSA then ignore key encipherment
-	if certificate.Spec.KeyAlgorithm == cmapi.ECDSAKeyAlgorithm {
+	if certificate.Spec.PrivateKey != nil && certificate.Spec.PrivateKey.Algorithm == cmapi.ECDSAKeyAlgorithm {
 		certificateKeyUsages &^= x509.KeyUsageKeyEncipherment
 		cert.KeyUsage &^= x509.KeyUsageKeyEncipherment
 	}
@@ -211,6 +220,10 @@ func (h *Helper) ValidateIssuedCertificate(certificate *cmapi.Certificate, rootC
 		return nil, fmt.Errorf("key usages and extended key usages do not match: exp=%s got=%s exp=%s got=%s",
 			apiutil.KeyUsageStrings(certificateKeyUsages), apiutil.KeyUsageStrings(cert.KeyUsage),
 			apiutil.ExtKeyUsageStrings(certificateExtKeyUsages), apiutil.ExtKeyUsageStrings(cert.ExtKeyUsage))
+	}
+
+	if !util.EqualUnsorted(cert.EmailAddresses, certificate.Spec.EmailAddresses) {
+		return nil, fmt.Errorf("certificate doesn't contain Email SANs: exp=%v got=%v", certificate.Spec.EmailAddresses, cert.EmailAddresses)
 	}
 
 	var dnsName string
@@ -254,15 +267,22 @@ func (h *Helper) deduplicateExtKeyUsages(us []x509.ExtKeyUsage) []x509.ExtKeyUsa
 	return us
 }
 
-func (h *Helper) WaitCertificateIssuedValid(ns, name string, timeout time.Duration) error {
-	return h.WaitCertificateIssuedValidTLS(ns, name, timeout, nil)
+func (h *Helper) WaitCertificateIssued(ns, name string, timeout time.Duration) error {
+	certificate, err := h.WaitForCertificateReady(ns, name, timeout)
+	if err != nil {
+		log.Logf("Error waiting for Certificate to become Ready: %v", err)
+		h.Kubectl(ns).DescribeResource("certificate", name)
+		h.Kubectl(ns).Describe("order", "challenge")
+		h.describeCertificateRequestFromCertificate(ns, certificate)
+	}
+	return err
 }
 
 func (h *Helper) defaultKeyUsagesToAdd(ns string, issuerRef *cmmeta.ObjectReference) (x509.KeyUsage, []x509.ExtKeyUsage, error) {
 	var issuerSpec *cmapi.IssuerSpec
 	switch issuerRef.Kind {
 	case "ClusterIssuer":
-		issuerObj, err := h.CMClient.CertmanagerV1alpha2().ClusterIssuers().Get(issuerRef.Name, metav1.GetOptions{})
+		issuerObj, err := h.CMClient.CertmanagerV1().ClusterIssuers().Get(context.TODO(), issuerRef.Name, metav1.GetOptions{})
 		if err != nil {
 			return 0, nil, fmt.Errorf("failed to find referenced ClusterIssuer %v: %s",
 				issuerRef, err)
@@ -270,7 +290,7 @@ func (h *Helper) defaultKeyUsagesToAdd(ns string, issuerRef *cmmeta.ObjectRefere
 
 		issuerSpec = &issuerObj.Spec
 	default:
-		issuerObj, err := h.CMClient.CertmanagerV1alpha2().Issuers(ns).Get(issuerRef.Name, metav1.GetOptions{})
+		issuerObj, err := h.CMClient.CertmanagerV1().Issuers(ns).Get(context.TODO(), issuerRef.Name, metav1.GetOptions{})
 		if err != nil {
 			return 0, nil, fmt.Errorf("failed to find referenced Issuer %v: %s",
 				issuerRef, err)
@@ -328,34 +348,12 @@ func (h *Helper) keyUsagesMatch(aKU x509.KeyUsage, aEKU []x509.ExtKeyUsage,
 	return true
 }
 
-func (h *Helper) WaitCertificateIssuedValidTLS(ns, name string, timeout time.Duration, rootCAPEM []byte) error {
-	certificate, err := h.WaitForCertificateReady(ns, name, timeout)
-	if err != nil {
-		log.Logf("Error waiting for Certificate to become Ready: %v", err)
-		h.Kubectl(ns).DescribeResource("certificate", name)
-		h.Kubectl(ns).Describe("order", "challenge")
-		h.describeCertificateRequestFromCertificate(ns, certificate)
-		return err
-	}
-
-	_, err = h.ValidateIssuedCertificate(certificate, rootCAPEM)
-	if err != nil {
-		log.Logf("Error validating issued certificate: %v", err)
-		h.Kubectl(ns).DescribeResource("certificate", name)
-		h.Kubectl(ns).Describe("order", "challenge")
-		h.describeCertificateRequestFromCertificate(ns, certificate)
-		return err
-	}
-
-	return nil
-}
-
 func (h *Helper) describeCertificateRequestFromCertificate(ns string, certificate *cmapi.Certificate) {
 	if certificate == nil {
 		return
 	}
 
-	crName, err := apiutil.ComputeCertificateRequestName(certificate)
+	crName, err := apiutil.ComputeName(certificate.Name, certificate.Spec)
 	if err != nil {
 		log.Logf("Failed to compute CertificateRequest name from certificate: %s", err)
 		return

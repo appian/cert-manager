@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,18 +18,25 @@ package venafi
 
 import (
 	"context"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
 
-	"github.com/Venafi/vcert/pkg/endpoint"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 
+	"github.com/Venafi/vcert/v4/pkg/endpoint"
+
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
+	clientset "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests"
 	crutil "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/util"
-	venafiinternal "github.com/jetstack/cert-manager/pkg/internal/venafi"
 	issuerpkg "github.com/jetstack/cert-manager/pkg/issuer"
+	venaficlient "github.com/jetstack/cert-manager/pkg/issuer/venafi/client"
+	"github.com/jetstack/cert-manager/pkg/issuer/venafi/client/api"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
@@ -41,8 +48,9 @@ type Venafi struct {
 	issuerOptions controllerpkg.IssuerOptions
 	secretsLister corelisters.SecretLister
 	reporter      *crutil.Reporter
+	cmClient      clientset.Interface
 
-	clientBuilder venafiinternal.VenafiClientBuilder
+	clientBuilder venaficlient.VenafiClientBuilder
 }
 
 func init() {
@@ -59,7 +67,8 @@ func NewVenafi(ctx *controllerpkg.Context) *Venafi {
 		issuerOptions: ctx.IssuerOptions,
 		secretsLister: ctx.KubeSharedInformerFactory.Core().V1().Secrets().Lister(),
 		reporter:      crutil.NewReporter(ctx.Clock, ctx.Recorder),
-		clientBuilder: venafiinternal.New,
+		clientBuilder: venaficlient.New,
+		cmClient:      ctx.CMClient,
 	}
 }
 
@@ -67,7 +76,7 @@ func (v *Venafi) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerO
 	log := logf.FromContext(ctx, "sign")
 	log = logf.WithRelatedResource(log, issuerObj)
 
-	client, err := v.clientBuilder(cr.Namespace, v.secretsLister, issuerObj)
+	client, err := v.clientBuilder(v.issuerOptions.ResourceNamespace(issuerObj), v.secretsLister, issuerObj)
 	if k8sErrors.IsNotFound(err) {
 		message := "Required secret resource not found"
 
@@ -86,27 +95,61 @@ func (v *Venafi) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerO
 		return nil, err
 	}
 
+	var customFields []api.CustomField
+	if annotation, exists := cr.GetAnnotations()[cmapi.VenafiCustomFieldsAnnotationKey]; exists && annotation != "" {
+		err := json.Unmarshal([]byte(annotation), &customFields)
+		if err != nil {
+			message := fmt.Sprintf("Failed to parse %q annotation", cmapi.VenafiCustomFieldsAnnotationKey)
+
+			v.reporter.Failed(cr, err, "CustomFieldsError", message)
+			log.Error(err, message)
+
+			return nil, nil
+		}
+	}
+
 	duration := apiutil.DefaultCertDuration(cr.Spec.Duration)
+	pickupID := cr.ObjectMeta.Annotations[cmapi.VenafiPickupIDAnnotationKey]
 
-	certPem, err := client.Sign(cr.Spec.CSRPEM, duration)
+	// check if the pickup ID annotation is there, if not set it up.
+	if pickupID == "" {
+		pickupID, err = client.RequestCertificate(cr.Spec.Request, duration, customFields)
+		// Check some known error types
+		if err != nil {
+			switch err.(type) {
 
-	// Check some known error types
+			case venaficlient.ErrCustomFieldsType:
+				v.reporter.Failed(cr, err, "CustomFieldsError", err.Error())
+				log.Error(err, err.Error())
+
+				return nil, nil
+
+			default:
+				message := "Failed to request venafi certificate"
+
+				v.reporter.Failed(cr, err, "RequestError", message)
+				log.Error(err, message)
+
+				return nil, err
+			}
+		}
+
+		v.reporter.Pending(cr, err, "IssuancePending", "Venafi certificate is requested")
+
+		metav1.SetMetaDataAnnotation(&cr.ObjectMeta, cmapi.VenafiPickupIDAnnotationKey, pickupID)
+
+		return nil, nil
+	}
+
+	certPem, err := client.RetrieveCertificate(pickupID, cr.Spec.Request, duration, customFields)
 	if err != nil {
 		switch err.(type) {
-
-		case endpoint.ErrCertificatePending:
+		case endpoint.ErrCertificatePending, endpoint.ErrRetrieveCertificateTimeout:
 			message := "Venafi certificate still in a pending state, the request will be retried"
 
 			v.reporter.Pending(cr, err, "IssuancePending", message)
 			log.Error(err, message)
 			return nil, err
-
-		case endpoint.ErrRetrieveCertificateTimeout:
-			message := "Timed out waiting for venafi certificate, the request will be retried"
-
-			v.reporter.Failed(cr, err, "Timeout", message)
-			log.Error(err, message)
-			return nil, nil
 
 		default:
 			message := "Failed to obtain venafi certificate"
@@ -118,9 +161,22 @@ func (v *Venafi) Sign(ctx context.Context, cr *cmapi.CertificateRequest, issuerO
 		}
 	}
 
-	log.Info("certificate issued")
+	log.V(logf.DebugLevel).Info("certificate issued")
 
+	// Assume the last certificate is the root CA
+	var (
+		block, lastBlock *pem.Block
+		remainingBytes   = certPem
+	)
+	for {
+		block, remainingBytes = pem.Decode(remainingBytes)
+		if block == nil {
+			break
+		}
+		lastBlock = block
+	}
 	return &issuerpkg.IssueResponse{
 		Certificate: certPem,
+		CA:          pem.EncodeToMemory(lastBlock),
 	}, nil
 }

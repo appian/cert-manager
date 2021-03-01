@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@ limitations under the License.
 package vault
 
 import (
+	"context"
 	"fmt"
 	"path"
 
 	vault "github.com/hashicorp/vault/api"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -44,8 +45,8 @@ type VaultInitializer struct {
 	APIServerCA        string // Kubernetes API Server CA certificate
 }
 
-func NewVaultTokenSecret(name string) *v1.Secret {
-	return &v1.Secret{
+func NewVaultTokenSecret(name string) *corev1.Secret {
+	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -55,8 +56,8 @@ func NewVaultTokenSecret(name string) *v1.Secret {
 	}
 }
 
-func NewVaultAppRoleSecret(name, secretId string) *v1.Secret {
-	return &v1.Secret{
+func NewVaultAppRoleSecret(name, secretId string) *corev1.Secret {
+	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: name,
 		},
@@ -66,8 +67,8 @@ func NewVaultAppRoleSecret(name, secretId string) *v1.Secret {
 	}
 }
 
-func NewVaultServiceAccount(name string) *v1.ServiceAccount {
-	return &v1.ServiceAccount{
+func NewVaultServiceAccount(name string) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -114,8 +115,8 @@ func NewVaultServiceAccountClusterRoleBinding(roleName, namespace, subject strin
 	}
 }
 
-func NewVaultKubernetesSecret(name string, serviceAccountName string) *v1.Secret {
-	return &v1.Secret{
+func NewVaultKubernetesSecret(name string, serviceAccountName string) *corev1.Secret {
+	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Annotations: map[string]string{
@@ -420,20 +421,20 @@ func (v *VaultInitializer) setupKubernetesBasedAuth() error {
 // CreateKubernetesRole creates a service account and ClusterRoleBinding for Kubernetes auth delegation
 func (v *VaultInitializer) CreateKubernetesRole(client kubernetes.Interface, namespace, roleName, serviceAccountName string) error {
 	serviceAccount := NewVaultServiceAccount(serviceAccountName)
-	_, err := client.CoreV1().ServiceAccounts(namespace).Create(serviceAccount)
+	_, err := client.CoreV1().ServiceAccounts(namespace).Create(context.TODO(), serviceAccount, metav1.CreateOptions{})
 
 	if err != nil {
 		return fmt.Errorf("error creating ServiceAccount for Kubernetes auth: %s", err.Error())
 	}
 
 	role := NewVaultServiceAccountRole(namespace)
-	_, err = client.RbacV1().ClusterRoles().Create(role)
+	_, err = client.RbacV1().ClusterRoles().Create(context.TODO(), role, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("error creating Role for Kubernetes auth ServiceAccount: %s", err.Error())
 	}
 
 	roleBinding := NewVaultServiceAccountClusterRoleBinding(role.Name, namespace, serviceAccountName)
-	_, err = client.RbacV1().ClusterRoleBindings().Create(roleBinding)
+	_, err = client.RbacV1().ClusterRoleBindings().Create(context.TODO(), roleBinding, metav1.CreateOptions{})
 
 	if err != nil {
 		return fmt.Errorf("error creating RoleBinding for Kubernetes auth ServiceAccount: %s", err.Error())
@@ -457,15 +458,15 @@ func (v *VaultInitializer) CreateKubernetesRole(client kubernetes.Interface, nam
 
 // CleanKubernetesRole cleans up the ClusterRoleBinding and ServiceAccount for Kubernetes auth delegation
 func (v *VaultInitializer) CleanKubernetesRole(client kubernetes.Interface, namespace, roleName, serviceAccountName string) error {
-	if err := client.RbacV1().RoleBindings(namespace).Delete(roleName, nil); err != nil {
+	if err := client.RbacV1().RoleBindings(namespace).Delete(context.TODO(), roleName, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
 
-	if err := client.RbacV1().Roles(namespace).Delete(roleName, nil); err != nil {
+	if err := client.RbacV1().Roles(namespace).Delete(context.TODO(), roleName, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
 
-	if err := client.CoreV1().ServiceAccounts(namespace).Delete(serviceAccountName, nil); err != nil {
+	if err := client.CoreV1().ServiceAccounts(namespace).Delete(context.TODO(), serviceAccountName, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
 

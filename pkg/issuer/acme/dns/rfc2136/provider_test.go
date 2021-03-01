@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,9 +17,10 @@ limitations under the License.
 package rfc2136
 
 import (
+	"context"
 	"testing"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 	"github.com/jetstack/cert-manager/test/acme/dns"
@@ -27,7 +28,7 @@ import (
 )
 
 func TestRunSuiteWithTSIG(t *testing.T) {
-	ctx := logf.NewContext(nil, nil, t.Name())
+	ctx := logf.NewContext(context.TODO(), nil, t.Name())
 	server := &testserver.BasicServer{
 		Zones:         []string{rfc2136TestZone},
 		EnableTSIG:    true,
@@ -66,7 +67,7 @@ func TestRunSuiteWithTSIG(t *testing.T) {
 }
 
 func TestRunSuiteNoTSIG(t *testing.T) {
-	ctx := logf.NewContext(nil, nil, t.Name())
+	ctx := logf.NewContext(context.TODO(), nil, t.Name())
 	server := &testserver.BasicServer{
 		Zones: []string{rfc2136TestZone},
 	}

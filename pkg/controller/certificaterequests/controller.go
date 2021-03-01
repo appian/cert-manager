@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,14 +26,13 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/clock"
 
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
-	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1alpha2"
+	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests/util"
 	"github.com/jetstack/cert-manager/pkg/issuer"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
-	"github.com/jetstack/cert-manager/pkg/metrics"
 )
 
 const (
@@ -43,7 +42,7 @@ const (
 var keyFunc = controllerpkg.KeyFunc
 
 type Issuer interface {
-	Sign(context.Context, *v1alpha2.CertificateRequest, v1alpha2.GenericIssuer) (*issuer.IssueResponse, error)
+	Sign(context.Context, *v1.CertificateRequest, v1.GenericIssuer) (*issuer.IssueResponse, error)
 }
 
 type Controller struct {
@@ -54,8 +53,7 @@ type Controller struct {
 
 	certificateRequestLister cmlisters.CertificateRequestLister
 
-	queue   workqueue.RateLimitingInterface
-	metrics *metrics.Metrics
+	queue workqueue.RateLimitingInterface
 
 	// logger to be used by this controller
 	log logr.Logger
@@ -104,18 +102,18 @@ func New(issuerType string, issuer Issuer, extraInformers ...cache.SharedIndexIn
 // Register registers and constructs the controller using the provided context.
 // It returns the workqueue to be used to enqueue items, a list of
 // InformerSynced functions that must be synced, or an error.
-func (c *Controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, []controllerpkg.RunFunc, error) {
+func (c *Controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, error) {
 	// construct a new named logger to be reused throughout the controller
 	c.log = logf.FromContext(ctx.RootContext, ControllerName)
 
 	// create a queue used to queue up items to be processed
 	c.queue = workqueue.NewNamedRateLimitingQueue(controllerpkg.DefaultItemBasedRateLimiter(), ControllerName)
 
-	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().Issuers()
+	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1().Issuers()
 	c.issuerLister = issuerInformer.Lister()
 
 	// obtain references to all the informers used by this controller
-	certificateRequestInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().CertificateRequests()
+	certificateRequestInformer := ctx.SharedInformerFactory.Certmanager().V1().CertificateRequests()
 
 	// build a list of InformerSynced functions that will be returned by the Register method.
 	// the controller will only begin processing items once all of these informers have synced.
@@ -135,7 +133,7 @@ func (c *Controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	// if we are running in non-namespaced mode (i.e. --namespace=""), we also
 	// register event handlers and obtain a lister for clusterissuers.
 	if ctx.Namespace == "" {
-		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().ClusterIssuers()
+		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1().ClusterIssuers()
 		c.clusterIssuerLister = clusterIssuerInformer.Lister()
 		// register handler function for clusterissuer resources
 		clusterIssuerInformer.Informer().AddEventHandler(&controllerpkg.BlockingEventHandler{WorkFunc: c.handleGenericIssuer})
@@ -156,9 +154,6 @@ func (c *Controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 		})
 	}
 
-	// instantiate metrics interface with default metrics implementation
-	c.metrics = metrics.Default
-
 	// create an issuer helper for reading generic issuers
 	c.helper = issuer.NewHelper(c.issuerLister, c.clusterIssuerLister)
 
@@ -169,10 +164,10 @@ func (c *Controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	c.reporter = util.NewReporter(c.clock, c.recorder)
 	c.cmClient = ctx.CMClient
 
-	c.log.Info("new certificate request controller registered",
+	c.log.V(logf.DebugLevel).Info("new certificate request controller registered",
 		"type", c.issuerType)
 
-	return c.queue, mustSync, nil, nil
+	return c.queue, mustSync, nil
 }
 
 func (c *Controller) ProcessItem(ctx context.Context, key string) error {

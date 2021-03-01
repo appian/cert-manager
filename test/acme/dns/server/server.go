@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -51,7 +51,6 @@ type BasicServer struct {
 	// TSIGZone is the DNS zone that should be used in TSIG responses
 	TSIGZone string
 
-	ctx        context.Context
 	listenAddr string
 	server     *dns.Server
 }
@@ -75,14 +74,11 @@ func (b *BasicServer) RunWithAddress(ctx context.Context, listenAddr string) err
 	}
 	b.listenAddr = pc.LocalAddr().String()
 	log = log.WithValues("address", b.listenAddr)
-	log.Info("listening on UDP port")
+	log.V(logf.InfoLevel).Info("listening on UDP port")
 
-	// update the ctx with the new logger
-	ctx = logf.NewContext(ctx, log)
-
-	b.server = &dns.Server{PacketConn: pc, ReadTimeout: time.Hour, WriteTimeout: time.Hour}
+	b.server = &dns.Server{PacketConn: pc, ReadTimeout: time.Hour, WriteTimeout: time.Hour, MsgAcceptFunc: msgAcceptFunc}
 	if b.EnableTSIG {
-		log.Info("enabling TSIG support")
+		log.V(logf.DebugLevel).Info("enabling TSIG support")
 		b.server.TsigSecret = map[string]string{b.TSIGKeyName: b.TSIGKeySecret}
 	}
 
@@ -101,9 +97,9 @@ func (b *BasicServer) RunWithAddress(ctx context.Context, listenAddr string) err
 	waitLock.Lock()
 	b.server.NotifyStartedFunc = waitLock.Unlock
 	go func() {
-		log.Info("starting DNS server")
+		log.V(logf.DebugLevel).Info("starting DNS server")
 		b.server.ActivateAndServe()
-		log.Info("DNS server exited")
+		log.V(logf.DebugLevel).Info("DNS server exited")
 		pc.Close()
 	}()
 	waitLock.Lock()
@@ -118,4 +114,12 @@ func (b *BasicServer) ListenAddr() string {
 
 func (b *BasicServer) Shutdown() error {
 	return b.server.Shutdown()
+}
+
+func msgAcceptFunc(dh dns.Header) dns.MsgAcceptAction {
+	// the miekg/dns message accept function disallows rfc2136 headers
+	// this function replaces that behaviour to always accept the request
+	// since this is always running in the controlled environment of tests
+	// it should not be an issue
+	return dns.MsgAccept
 }

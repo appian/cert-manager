@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import (
 	"k8s.io/utils/clock"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 )
 
@@ -56,6 +56,12 @@ func (r *Reporter) Failed(cr *cmapi.CertificateRequest, err error, reason, messa
 	r.recorder.Event(cr, corev1.EventTypeWarning, reason, message)
 	apiutil.SetCertificateRequestCondition(cr, cmapi.CertificateRequestConditionReady,
 		cmmeta.ConditionFalse, cmapi.CertificateRequestReasonFailed, message)
+
+}
+
+func (r *Reporter) InvalidRequest(cr *cmapi.CertificateRequest, reason, message string) {
+	apiutil.SetCertificateRequestCondition(cr, cmapi.CertificateRequestConditionInvalidRequest,
+		cmmeta.ConditionTrue, reason, message)
 }
 
 func (r *Reporter) Pending(cr *cmapi.CertificateRequest, err error, reason, message string) {

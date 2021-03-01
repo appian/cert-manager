@@ -6,10 +6,10 @@ go_library(
     importpath = "github.com/jetstack/cert-manager/pkg/internal/vault",
     visibility = ["//pkg:__subpackages__"],
     deps = [
-        "//pkg/apis/certmanager/v1alpha2:go_default_library",
+        "//pkg/apis/certmanager/v1:go_default_library",
         "//pkg/util/pki:go_default_library",
-        "@com_github_hashicorp_vault//api:go_default_library",
-        "@com_github_hashicorp_vault//helper/certutil:go_default_library",
+        "@com_github_hashicorp_vault_api//:go_default_library",
+        "@com_github_hashicorp_vault_sdk//helper/certutil:go_default_library",
         "@io_k8s_client_go//listers/core/v1:go_default_library",
     ],
 )
@@ -19,15 +19,15 @@ go_test(
     srcs = ["vault_test.go"],
     embed = [":go_default_library"],
     deps = [
-        "//pkg/apis/certmanager/v1alpha2:go_default_library",
+        "//pkg/apis/certmanager/v1:go_default_library",
         "//pkg/apis/meta/v1:go_default_library",
         "//pkg/internal/vault/fake:go_default_library",
         "//pkg/util/pki:go_default_library",
         "//test/unit/gen:go_default_library",
         "//test/unit/listers:go_default_library",
-        "@com_github_hashicorp_vault//api:go_default_library",
-        "@com_github_hashicorp_vault//helper/certutil:go_default_library",
-        "@com_github_hashicorp_vault//helper/jsonutil:go_default_library",
+        "@com_github_hashicorp_vault_api//:go_default_library",
+        "@com_github_hashicorp_vault_sdk//helper/certutil:go_default_library",
+        "@com_github_hashicorp_vault_sdk//helper/jsonutil:go_default_library",
         "@io_k8s_api//core/v1:go_default_library",
     ],
 )

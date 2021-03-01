@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,14 +20,14 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/issuer"
 )
 
 type Vault struct {
 	*controller.Context
-	issuer v1alpha2.GenericIssuer
+	issuer v1.GenericIssuer
 
 	secretsLister corelisters.SecretLister
 
@@ -37,7 +37,7 @@ type Vault struct {
 	resourceNamespace string
 }
 
-func NewVault(ctx *controller.Context, issuer v1alpha2.GenericIssuer) (issuer.Interface, error) {
+func NewVault(ctx *controller.Context, issuer v1.GenericIssuer) (issuer.Interface, error) {
 	secretsLister := ctx.KubeSharedInformerFactory.Core().V1().Secrets().Lister()
 
 	return &Vault{

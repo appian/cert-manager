@@ -1,36 +1,17 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
-load("//hack/build:docker.bzl", "covered_image", "image")
-
-image(
-    name = "image",
-    binary = ":cainjector",
-    component = "cainjector",
-    visibility = ["//visibility:public"],
-)
-
-covered_image(
-    name = "image.covered",
-    component = "cainjector",
-    visibility = ["//visibility:public"],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("//build:version.bzl", "version_x_defs")
+load("//build:go_binary.bzl", "go_binary")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "main.go",
-        "start.go",
-    ],
+    srcs = ["main.go"],
     importpath = "github.com/jetstack/cert-manager/cmd/cainjector",
     visibility = ["//visibility:private"],
     deps = [
-        "//pkg/api:go_default_library",
-        "//pkg/controller/cainjector:go_default_library",
+        "//cmd/cainjector/app:go_default_library",
         "//pkg/logs:go_default_library",
         "//pkg/util:go_default_library",
-        "@com_github_spf13_cobra//:go_default_library",
-        "@com_github_spf13_pflag//:go_default_library",
-        "@io_k8s_client_go//plugin/pkg/client/auth:go_default_library",
-        "@io_k8s_klog//:go_default_library",
+        "//pkg/util/cmd:go_default_library",
         "@io_k8s_sigs_controller_runtime//:go_default_library",
     ],
 )
@@ -51,7 +32,10 @@ filegroup(
 
 filegroup(
     name = "all-srcs",
-    srcs = [":package-srcs"],
+    srcs = [
+        ":package-srcs",
+        "//cmd/cainjector/app:all-srcs",
+    ],
     tags = ["automanaged"],
     visibility = ["//visibility:public"],
 )

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ import (
 	"k8s.io/utils/pointer"
 
 	acmecl "github.com/jetstack/cert-manager/pkg/acme/client"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 )
 
 func TestChallengeSpecForAuthorization(t *testing.T) {
@@ -91,7 +91,7 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 
 	tests := map[string]struct {
 		acmeClient acmecl.Interface
-		issuer     v1alpha2.GenericIssuer
+		issuer     v1.GenericIssuer
 		order      *cmacme.Order
 		authz      *cmacme.ACMEAuthorization
 
@@ -100,9 +100,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 	}{
 		"should override the ingress name to edit if override annotation is specified": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{emptySelectorSolverHTTP01},
 						},
@@ -124,11 +124,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					HTTP01: &cmacme.ACMEChallengeSolverHTTP01{
 						Ingress: &cmacme.ACMEChallengeSolverHTTP01Ingress{
 							Name: "test-name-to-override",
@@ -139,9 +139,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"should override the ingress class to edit if override annotation is specified": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{emptySelectorSolverHTTP01},
 						},
@@ -163,11 +163,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					HTTP01: &cmacme.ACMEChallengeSolverHTTP01{
 						Ingress: &cmacme.ACMEChallengeSolverHTTP01Ingress{
 							Class: pointer.StringPtr("test-class-to-override"),
@@ -178,9 +178,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"should return an error if both ingress class and name override annotations are set": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{emptySelectorSolverHTTP01},
 						},
@@ -206,9 +206,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"should ignore HTTP01 override annotations if DNS01 solver is chosen": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{emptySelectorSolverDNS01},
 						},
@@ -230,18 +230,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "dns-01",
+				Type:    cmacme.ACMEChallengeTypeDNS01,
 				DNSName: "example.com",
 				Token:   acmeChallengeDNS01.Token,
 				Key:     "dns01",
-				Solver:  &emptySelectorSolverDNS01,
+				Solver:  emptySelectorSolverDNS01,
 			},
 		},
 		"should use configured default solver when no others are present": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{emptySelectorSolverHTTP01},
 						},
@@ -258,18 +258,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &emptySelectorSolverHTTP01,
+				Solver:  emptySelectorSolverHTTP01,
 			},
 		},
 		"should use configured default solver when no others are present but selector is non-nil": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -295,11 +295,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{},
 					HTTP01: &cmacme.ACMEChallengeSolverHTTP01{
 						Ingress: &cmacme.ACMEChallengeSolverHTTP01Ingress{
@@ -311,9 +311,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"should use configured default solver when others do not match": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverHTTP01,
@@ -333,18 +333,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &emptySelectorSolverHTTP01,
+				Solver:  emptySelectorSolverHTTP01,
 			},
 		},
 		"should use DNS01 solver over HTTP01 if challenge is of type DNS01": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverHTTP01,
@@ -364,18 +364,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "dns-01",
+				Type:    cmacme.ACMEChallengeTypeDNS01,
 				DNSName: "example.com",
 				Token:   acmeChallengeDNS01.Token,
 				Key:     "dns01",
-				Solver:  &emptySelectorSolverDNS01,
+				Solver:  emptySelectorSolverDNS01,
 			},
 		},
 		"should return an error if none match": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								nonMatchingSelectorSolver,
@@ -397,9 +397,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"uses correct solver when selector explicitly names dnsName": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverHTTP01,
@@ -419,18 +419,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		"uses default solver if dnsName does not match": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverHTTP01,
@@ -450,18 +450,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "notexample.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &emptySelectorSolverHTTP01,
+				Solver:  emptySelectorSolverHTTP01,
 			},
 		},
 		"if two solvers specify the same dnsName, the one with the most labels should be chosen": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								exampleComDNSNameSelectorSolver,
@@ -498,11 +498,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						MatchLabels: map[string]string{
 							"label": "exists",
@@ -519,9 +519,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"if one solver matches with dnsNames, and the other solver matches with labels, the dnsName solver should be chosen": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								exampleComDNSNameSelectorSolver,
@@ -557,20 +557,20 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		// identical to the test above, but the solvers are listed in reverse
 		// order to ensure that this behaviour isn't just incidental
 		"if one solver matches with dnsNames, and the other solver matches with labels, the dnsName solver should be chosen (solvers listed in reverse order)": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -606,18 +606,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		"if one solver matches with dnsNames, and the other solver matches with 2 labels, the dnsName solver should be chosen": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								exampleComDNSNameSelectorSolver,
@@ -655,18 +655,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		"should choose the solver with the most labels matching if multiple match": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -715,11 +715,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						MatchLabels: map[string]string{
 							"label":   "exists",
@@ -736,9 +736,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"should match wildcard dnsName solver if authorization has Wildcard=true": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverDNS01,
@@ -768,12 +768,12 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:     "dns-01",
+				Type:     cmacme.ACMEChallengeTypeDNS01,
 				DNSName:  "example.com",
 				Wildcard: true,
 				Token:    acmeChallengeDNS01.Token,
 				Key:      "dns01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSNames: []string{"*.example.com"},
 					},
@@ -787,9 +787,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"dnsName selectors should take precedence over dnsZone selectors": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								exampleComDNSNameSelectorSolver,
@@ -818,18 +818,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		"dnsName selectors should take precedence over dnsZone selectors (reversed order)": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -858,18 +858,18 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 		"should allow matching with dnsZones": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								emptySelectorSolverDNS01,
@@ -899,12 +899,12 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:     "dns-01",
+				Type:     cmacme.ACMEChallengeTypeDNS01,
 				DNSName:  "www.example.com",
 				Wildcard: true,
 				Token:    acmeChallengeDNS01.Token,
 				Key:      "dns01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSZones: []string{"example.com"},
 					},
@@ -918,9 +918,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"most specific dnsZone should be selected if multiple match": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -959,12 +959,12 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:     "dns-01",
+				Type:     cmacme.ACMEChallengeTypeDNS01,
 				DNSName:  "www.prod.example.com",
 				Wildcard: true,
 				Token:    acmeChallengeDNS01.Token,
 				Key:      "dns01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSZones: []string{"prod.example.com"},
 					},
@@ -978,9 +978,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"most specific dnsZone should be selected if multiple match (reversed)": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -1019,12 +1019,12 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeDNS01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:     "dns-01",
+				Type:     cmacme.ACMEChallengeTypeDNS01,
 				DNSName:  "www.prod.example.com",
 				Wildcard: true,
 				Token:    acmeChallengeDNS01.Token,
 				Key:      "dns01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSZones: []string{"prod.example.com"},
 					},
@@ -1038,9 +1038,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"if two solvers specify the same dnsZone, the one with the most labels should be chosen": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -1086,11 +1086,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "www.example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						MatchLabels: map[string]string{
 							"label": "exists",
@@ -1107,9 +1107,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"if both solvers match dnsNames, and one also matches dnsZones, choose the one that matches dnsZones": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -1148,11 +1148,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "www.example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSZones: []string{"example.com"},
 						DNSNames: []string{"www.example.com"},
@@ -1167,9 +1167,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"if both solvers match dnsNames, and one also matches dnsZones, choose the one that matches dnsZones (reversed)": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								{
@@ -1208,11 +1208,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "www.example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver: &cmacme.ACMEChallengeSolver{
+				Solver: cmacme.ACMEChallengeSolver{
 					Selector: &cmacme.CertificateDNSNameSelector{
 						DNSZones: []string{"example.com"},
 						DNSNames: []string{"www.example.com"},
@@ -1227,9 +1227,9 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 		},
 		"uses correct solver when selector explicitly names dnsName (reversed)": {
 			acmeClient: basicACMEClient,
-			issuer: &v1alpha2.Issuer{
-				Spec: v1alpha2.IssuerSpec{
-					IssuerConfig: v1alpha2.IssuerConfig{
+			issuer: &v1.Issuer{
+				Spec: v1.IssuerSpec{
+					IssuerConfig: v1.IssuerConfig{
 						ACME: &cmacme.ACMEIssuer{
 							Solvers: []cmacme.ACMEChallengeSolver{
 								exampleComDNSNameSelectorSolver,
@@ -1249,11 +1249,11 @@ func TestChallengeSpecForAuthorization(t *testing.T) {
 				Challenges: []cmacme.ACMEChallenge{*acmeChallengeHTTP01},
 			},
 			expectedChallengeSpec: &cmacme.ChallengeSpec{
-				Type:    "http-01",
+				Type:    cmacme.ACMEChallengeTypeHTTP01,
 				DNSName: "example.com",
 				Token:   acmeChallengeHTTP01.Token,
 				Key:     "http01",
-				Solver:  &exampleComDNSNameSelectorSolver,
+				Solver:  exampleComDNSNameSelectorSolver,
 			},
 		},
 	}

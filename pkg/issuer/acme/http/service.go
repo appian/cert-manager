@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
@@ -44,7 +44,7 @@ func (s *Solver) ensureService(ctx context.Context, ch *cmacme.Challenge) (*core
 		return existingServices[0], nil
 	}
 	if len(existingServices) > 1 {
-		log.Info("multiple challenge solver services found for challenge. cleaning up all existing services.")
+		log.V(logf.DebugLevel).Info("multiple challenge solver services found for challenge. cleaning up all existing services.")
 		err := s.cleanupServices(ctx, ch)
 		if err != nil {
 			return nil, err
@@ -52,7 +52,7 @@ func (s *Solver) ensureService(ctx context.Context, ch *cmacme.Challenge) (*core
 		return nil, fmt.Errorf("multiple existing challenge solver services found and cleaned up. retrying challenge sync")
 	}
 
-	log.Info("creating HTTP01 challenge solver service")
+	log.V(logf.DebugLevel).Info("creating HTTP01 challenge solver service")
 	return s.createService(ch)
 }
 
@@ -96,7 +96,7 @@ func (s *Solver) createService(ch *cmacme.Challenge) (*corev1.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.Client.CoreV1().Services(ch.Namespace).Create(svc)
+	return s.Client.CoreV1().Services(ch.Namespace).Create(context.TODO(), svc, metav1.CreateOptions{})
 }
 
 func buildService(ch *cmacme.Challenge) (*corev1.Service, error) {
@@ -146,15 +146,15 @@ func (s *Solver) cleanupServices(ctx context.Context, ch *cmacme.Challenge) erro
 	var errs []error
 	for _, service := range services {
 		log := logf.WithRelatedResource(log, service).V(logf.DebugLevel)
-		log.Info("deleting service resource")
+		log.V(logf.DebugLevel).Info("deleting service resource")
 
-		err := s.Client.CoreV1().Services(service.Namespace).Delete(service.Name, nil)
+		err := s.Client.CoreV1().Services(service.Namespace).Delete(context.TODO(), service.Name, metav1.DeleteOptions{})
 		if err != nil {
-			log.Info("failed to delete pod resource", "error", err)
+			log.V(logf.WarnLevel).Info("failed to delete pod resource", "error", err)
 			errs = append(errs, err)
 			continue
 		}
-		log.Info("successfully deleted pod resource")
+		log.V(logf.DebugLevel).Info("successfully deleted pod resource")
 	}
 	return utilerrors.NewAggregate(errs)
 }

@@ -16,16 +16,21 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"k8s.io/klog"
+
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 type preCheckDNSFunc func(fqdn, value string, nameservers []string,
 	useAuthoritative bool) (bool, error)
+type dnsQueryFunc func(fqdn string, rtype uint16, nameservers []string, recursive bool) (in *dns.Msg, err error)
 
 var (
 	// PreCheckDNS checks DNS propagation before notifying ACME that
 	// the DNS challenge is ready.
 	PreCheckDNS preCheckDNSFunc = checkDNSPropagation
+
+	// dnsQuery is used to be able to mock DNSQuery
+	dnsQuery dnsQueryFunc = DNSQuery
 
 	fqdnToZoneLock sync.RWMutex
 	fqdnToZone     = map[string]string{}
@@ -65,31 +70,44 @@ func getNameservers(path string, defaults []string) []string {
 	return systemNameservers
 }
 
-// Update FQDN with CNAME if any
-func updateDomainWithCName(r *dns.Msg, fqdn string) string {
-	for _, rr := range r.Answer {
-		if cn, ok := rr.(*dns.CNAME); ok {
-			if cn.Hdr.Name == fqdn {
-				klog.Infof("Updating FQDN: %s with its CNAME: %s", fqdn, cn.Target)
-				fqdn = cn.Target
-				break
-			}
-		}
+// Follows the CNAME records and returns the last non-CNAME fully qualified domain name
+// that it finds. Returns an error when a loop is found in the CNAME chain. The
+// argument fqdnChain is used by the function itself to keep track of which fqdns it
+// already encountered and detect loops.
+func followCNAMEs(fqdn string, nameservers []string, fqdnChain ...string) (string, error) {
+	r, err := dnsQuery(fqdn, dns.TypeCNAME, nameservers, true)
+	if err != nil {
+		return "", err
 	}
-
-	return fqdn
+	if r.Rcode != dns.RcodeSuccess {
+		return fqdn, err
+	}
+	for _, rr := range r.Answer {
+		cn, ok := rr.(*dns.CNAME)
+		if !ok || cn.Hdr.Name != fqdn {
+			continue
+		}
+		logf.V(logf.DebugLevel).Infof("Updating FQDN: %s with its CNAME: %s", fqdn, cn.Target)
+		// Check if we were here before to prevent loops in the chain of CNAME records.
+		for _, fqdnInChain := range fqdnChain {
+			if cn.Target != fqdnInChain {
+				continue
+			}
+			return "", fmt.Errorf("Found recursive CNAME record to %q when looking up %q", cn.Target, fqdn)
+		}
+		return followCNAMEs(cn.Target, nameservers, append(fqdnChain, fqdn)...)
+	}
+	return fqdn, nil
 }
 
 // checkDNSPropagation checks if the expected TXT record has been propagated to all authoritative nameservers.
 func checkDNSPropagation(fqdn, value string, nameservers []string,
 	useAuthoritative bool) (bool, error) {
-	// Initial attempt to resolve at the recursive NS
-	r, err := DNSQuery(fqdn, dns.TypeTXT, nameservers, true)
+
+	var err error
+	fqdn, err = followCNAMEs(fqdn, nameservers)
 	if err != nil {
 		return false, err
-	}
-	if r.Rcode == dns.RcodeSuccess {
-		fqdn = updateDomainWithCName(r, fqdn)
 	}
 
 	if !useAuthoritative {
@@ -120,7 +138,7 @@ func checkAuthoritativeNss(fqdn, value string, nameservers []string) (bool, erro
 			return false, fmt.Errorf("NS %s returned %s for %s", ns, dns.RcodeToString[r.Rcode], fqdn)
 		}
 
-		klog.V(6).Infof("Looking up TXT records for %q", fqdn)
+		logf.V(logf.DebugLevel).Infof("Looking up TXT records for %q", fqdn)
 		var found bool
 		for _, rr := range r.Answer {
 			if txt, ok := rr.(*dns.TXT); ok {
@@ -156,9 +174,9 @@ func DNSQuery(fqdn string, rtype uint16, nameservers []string, recursive bool) (
 		udp := &dns.Client{Net: "udp", Timeout: DNSTimeout}
 		in, _, err = udp.Exchange(m, ns)
 
-		if err == dns.ErrTruncated ||
+		if (in != nil && in.Truncated) ||
 			(err != nil && strings.HasPrefix(err.Error(), "read udp") && strings.HasSuffix(err.Error(), "i/o timeout")) {
-			klog.V(6).Infof("UDP dns lookup failed, retrying with TCP: %v", err)
+			logf.V(logf.DebugLevel).Infof("UDP dns lookup failed, retrying with TCP: %v", err)
 			tcp := &dns.Client{Net: "tcp", Timeout: DNSTimeout}
 			// If the TCP request succeeds, the err will reset to nil
 			in, _, err = tcp.Exchange(m, ns)
@@ -213,7 +231,10 @@ func ValidateCAA(domain string, issuerID []string, iswildcard bool, nameservers 
 					dns.RcodeToString[msg.Rcode], domain)
 			}
 			oldQuery := queryDomain
-			queryDomain = updateDomainWithCName(msg, queryDomain)
+			queryDomain, err := followCNAMEs(queryDomain, nameservers)
+			if err != nil {
+				return fmt.Errorf("while trying to follow CNAMEs for domain %s using nameservers %v: %w", queryDomain, nameservers, err)
+			}
 			if queryDomain == oldQuery {
 				break
 			}
@@ -274,7 +295,7 @@ func matchCAA(caas []*dns.CAA, issuerIDs map[string]bool, iswildcard bool) bool 
 func lookupNameservers(fqdn string, nameservers []string) ([]string, error) {
 	var authoritativeNss []string
 
-	klog.V(6).Infof("Searching fqdn %q using seed nameservers [%s]", fqdn, strings.Join(nameservers, ", "))
+	logf.V(logf.DebugLevel).Infof("Searching fqdn %q using seed nameservers [%s]", fqdn, strings.Join(nameservers, ", "))
 	zone, err := FindZoneByFqdn(fqdn, nameservers)
 	if err != nil {
 		return nil, fmt.Errorf("Could not determine the zone for %q: %v", fqdn, err)
@@ -292,7 +313,7 @@ func lookupNameservers(fqdn string, nameservers []string) ([]string, error) {
 	}
 
 	if len(authoritativeNss) > 0 {
-		klog.V(6).Infof("Returning authoritative nameservers [%s]", strings.Join(authoritativeNss, ", "))
+		logf.V(logf.DebugLevel).Infof("Returning authoritative nameservers [%s]", strings.Join(authoritativeNss, ", "))
 		return authoritativeNss, nil
 	}
 	return nil, fmt.Errorf("Could not determine authoritative nameservers for %q", fqdn)
@@ -305,7 +326,7 @@ func FindZoneByFqdn(fqdn string, nameservers []string) (string, error) {
 	// Do we have it cached?
 	if zone, ok := fqdnToZone[fqdn]; ok {
 		fqdnToZoneLock.RUnlock()
-		klog.V(6).Infof("Returning cached zone record %q for fqdn %q", zone, fqdn)
+		logf.V(logf.DebugLevel).Infof("Returning cached zone record %q for fqdn %q", zone, fqdn)
 		return zone, nil
 	}
 	fqdnToZoneLock.RUnlock()
@@ -341,7 +362,7 @@ func FindZoneByFqdn(fqdn string, nameservers []string) (string, error) {
 
 					zone := soa.Hdr.Name
 					fqdnToZone[fqdn] = zone
-					klog.V(6).Infof("Returning discovered zone record %q for fqdn %q", zone, fqdn)
+					logf.V(logf.DebugLevel).Infof("Returning discovered zone record %q for fqdn %q", zone, fqdn)
 					return zone, nil
 				}
 			}

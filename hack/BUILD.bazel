@@ -34,15 +34,6 @@ sh_test(
     tags = ["lint"],
 )
 
-sh_test(
-    name = "verify-links",
-    srcs = ["verify-links.sh"],
-    data = [
-        "@//:all-srcs",
-    ],
-    tags = ["lint"],
-)
-
 # Bazel file generation rules
 
 sh_binary(
@@ -281,11 +272,10 @@ filegroup(
     name = "all-srcs",
     srcs = [
         ":package-srcs",
-        "//hack/api-migration:all-srcs",
         "//hack/bin:all-srcs",
         "//hack/boilerplate:all-srcs",
         "//hack/build:all-srcs",
-        "//hack/release:all-srcs",
+        "//hack/filter-crd:all-srcs",
     ],
     tags = ["automanaged"],
     visibility = ["//visibility:public"],

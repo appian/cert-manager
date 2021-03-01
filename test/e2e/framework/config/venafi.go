@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,22 +23,30 @@ import (
 
 // Venafi global configuration for Venafi TPP/Cloud instances
 type Venafi struct {
-	TPP VenafiTPPConfiguration
+	TPP   VenafiTPPConfiguration
+	Cloud VenafiCloudConfiguration
 }
 
 type VenafiTPPConfiguration struct {
-	URL      string
+	URL         string
+	Zone        string
+	Username    string
+	Password    string
+	AccessToken string
+}
+
+type VenafiCloudConfiguration struct {
 	Zone     string
-	Username string
-	Password string
+	APIToken string
 }
 
 func (v *Venafi) AddFlags(fs *flag.FlagSet) {
 	v.TPP.AddFlags(fs)
+	v.Cloud.AddFlags(fs)
 }
 
 func (v *Venafi) Validate() []error {
-	return v.TPP.Validate()
+	return append(v.TPP.Validate(), v.Cloud.Validate()...)
 }
 
 func (v *VenafiTPPConfiguration) AddFlags(fs *flag.FlagSet) {
@@ -46,9 +54,18 @@ func (v *VenafiTPPConfiguration) AddFlags(fs *flag.FlagSet) {
 	fs.StringVar(&v.Zone, "global.venafi-tpp-zone", os.Getenv("VENAFI_TPP_ZONE"), "Zone to use during Venafi TPP end-to-end tests")
 	fs.StringVar(&v.Username, "global.venafi-tpp-username", os.Getenv("VENAFI_TPP_USERNAME"), "Username to use when authenticating with the Venafi TPP instance")
 	fs.StringVar(&v.Password, "global.venafi-tpp-password", os.Getenv("VENAFI_TPP_PASSWORD"), "Password to use when authenticating with the Venafi TPP instance")
+	fs.StringVar(&v.AccessToken, "global.venafi-tpp-access-token", os.Getenv("VENAFI_TPP_ACCESS_TOKEN"), "Access token to use when authenticating with the Venafi TPP instance")
 }
 
-// TODO: make missing venafi vars not fail validation (i.e. skip venafi tests)
 func (v *VenafiTPPConfiguration) Validate() []error {
+	return nil
+}
+
+func (v *VenafiCloudConfiguration) AddFlags(fs *flag.FlagSet) {
+	fs.StringVar(&v.Zone, "global.venafi-cloud-zone", os.Getenv("VENAFI_CLOUD_ZONE"), "Zone to use during Venafi Cloud end-to-end tests")
+	fs.StringVar(&v.APIToken, "global.venafi-cloud-apitoken", os.Getenv("VENAFI_CLOUD_APITOKEN"), "API token to use when authenticating with the Venafi Cloud instance")
+}
+
+func (v *VenafiCloudConfiguration) Validate() []error {
 	return nil
 }

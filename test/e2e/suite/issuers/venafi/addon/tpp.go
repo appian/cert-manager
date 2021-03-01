@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,12 +17,13 @@ limitations under the License.
 package addon
 
 import (
+	"context"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/test/e2e/framework/addon/base"
 	"github.com/jetstack/cert-manager/test/e2e/framework/config"
@@ -62,11 +63,14 @@ func (v *VenafiTPP) Setup(cfg *config.Config) error {
 	if v.config.Addons.Venafi.TPP.Zone == "" {
 		return errors.NewSkip(fmt.Errorf("Venafi TPP Zone must be set"))
 	}
-	if v.config.Addons.Venafi.TPP.Username == "" {
-		return errors.NewSkip(fmt.Errorf("Venafi TPP Username must be set"))
-	}
-	if v.config.Addons.Venafi.TPP.Password == "" {
-		return errors.NewSkip(fmt.Errorf("Venafi TPP Password must be set"))
+
+	if v.config.Addons.Venafi.TPP.AccessToken == "" {
+		if v.config.Addons.Venafi.TPP.Username == "" {
+			return errors.NewSkip(fmt.Errorf("Venafi TPP requires either an access-token or username-password to be set: missing username"))
+		}
+		if v.config.Addons.Venafi.TPP.Password == "" {
+			return errors.NewSkip(fmt.Errorf("Venafi TPP requires either an access-token or username-password to be set: missing password"))
+		}
 	}
 
 	return nil
@@ -79,12 +83,13 @@ func (v *VenafiTPP) Provision() error {
 			Namespace:    v.Namespace,
 		},
 		Data: map[string][]byte{
-			"username": []byte(v.config.Addons.Venafi.TPP.Username),
-			"password": []byte(v.config.Addons.Venafi.TPP.Password),
+			"username":     []byte(v.config.Addons.Venafi.TPP.Username),
+			"password":     []byte(v.config.Addons.Venafi.TPP.Password),
+			"access-token": []byte(v.config.Addons.Venafi.TPP.AccessToken),
 		},
 	}
 
-	s, err := v.Base.Details().KubeClient.CoreV1().Secrets(v.Namespace).Create(secret)
+	s, err := v.Base.Details().KubeClient.CoreV1().Secrets(v.Namespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -107,7 +112,7 @@ func (v *VenafiTPP) Details() *TPPDetails {
 }
 
 func (v *VenafiTPP) Deprovision() error {
-	return v.Base.Details().KubeClient.CoreV1().Secrets(v.createdSecret.Namespace).Delete(v.createdSecret.Name, nil)
+	return v.Base.Details().KubeClient.CoreV1().Secrets(v.createdSecret.Namespace).Delete(context.TODO(), v.createdSecret.Name, metav1.DeleteOptions{})
 }
 
 func (v *VenafiTPP) SupportsGlobal() bool {

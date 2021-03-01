@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,11 +40,26 @@ func SecretFrom(sec *corev1.Secret, mods ...SecretModifier) *corev1.Secret {
 	return sec
 }
 
+func SetSecretNamespace(namespace string) SecretModifier {
+	return func(sec *corev1.Secret) {
+		sec.ObjectMeta.Namespace = namespace
+	}
+}
+
 func SetSecretAnnotations(an map[string]string) SecretModifier {
 	return func(sec *corev1.Secret) {
 		sec.Annotations = make(map[string]string)
 		for k, v := range an {
 			sec.Annotations[k] = v
+		}
+	}
+}
+
+func SetSecretData(data map[string][]byte) SecretModifier {
+	return func(sec *corev1.Secret) {
+		sec.Data = make(map[string][]byte)
+		for k, v := range data {
+			sec.Data[k] = v
 		}
 	}
 }

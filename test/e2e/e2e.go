@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -33,9 +33,7 @@ var (
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
-	if !cfg.Addons.SkipGlobals {
-		addon.InitGlobals(cfg)
-	}
+	addon.InitGlobals(cfg)
 
 	ginkgo.By("Provisioning shared cluster addons")
 
@@ -83,11 +81,9 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {},
 			}
 		}
 
-		if !cfg.Addons.SkipGlobals {
-			ginkgo.By("Cleaning up the provisioned globals")
-			err = addon.DeprovisionGlobals(cfg)
-			if err != nil {
-				framework.Failf("Error deprovisioning global addons: %v", err)
-			}
+		ginkgo.By("Cleaning up the provisioned globals")
+		err = addon.DeprovisionGlobals(cfg)
+		if err != nil {
+			framework.Failf("Error deprovisioning global addons: %v", err)
 		}
 	})

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import (
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
 	"github.com/jetstack/cert-manager/pkg/apis/certmanager"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/pkg/controller/certificaterequests"
 	testpkg "github.com/jetstack/cert-manager/pkg/controller/test"
@@ -132,7 +132,7 @@ func TestSign(t *testing.T) {
 	baseCR := gen.CertificateRequest("test-cr",
 		gen.SetCertificateRequestAnnotations(
 			map[string]string{
-				cmapi.CRPrivateKeyAnnotationKey: rsaKeySecret.Name,
+				cmapi.CertificateRequestPrivateKeyAnnotationKey: rsaKeySecret.Name,
 			},
 		),
 		gen.SetCertificateRequestCSR(csrRSAPEM),
@@ -172,13 +172,13 @@ func TestSign(t *testing.T) {
 		"a CertificateRequest with no cert-manager.io/selfsigned-private-key annotation should fail": {
 			certificateRequest: gen.CertificateRequestFrom(baseCR,
 				// no annotation
-				gen.SetCertificateRequestAnnotations(map[string]string{}),
+				gen.DeleteCertificateRequestAnnotation(cmapi.CertificateRequestPrivateKeyAnnotationKey),
 			),
 			builder: &testpkg.Builder{
 				KubeObjects: []runtime.Object{},
 				CertManagerObjects: []runtime.Object{gen.CertificateRequestFrom(baseCR,
 					// no annotation
-					gen.SetCertificateRequestAnnotations(map[string]string{}),
+					gen.DeleteCertificateRequestAnnotation(cmapi.CertificateRequestPrivateKeyAnnotationKey),
 				), baseIssuer},
 				ExpectedEvents: []string{
 					`Warning MissingAnnotation Annotation "cert-manager.io/private-key-secret-name" missing or reference empty: secret name missing`,
@@ -189,7 +189,7 @@ func TestSign(t *testing.T) {
 						"status",
 						gen.DefaultTestNamespace,
 						gen.CertificateRequestFrom(baseCR,
-							gen.SetCertificateRequestAnnotations(map[string]string{}),
+							gen.DeleteCertificateRequestAnnotation(cmapi.CertificateRequestPrivateKeyAnnotationKey),
 							gen.SetCertificateRequestStatusCondition(cmapi.CertificateRequestCondition{
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
@@ -206,13 +206,13 @@ func TestSign(t *testing.T) {
 		"a CertificateRequest with a cert-manager.io/private-key-secret-name annotation but empty string should fail": {
 			certificateRequest: gen.CertificateRequestFrom(baseCR,
 				// no data in annotation
-				gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CRPrivateKeyAnnotationKey: ""}),
+				gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CertificateRequestPrivateKeyAnnotationKey: ""}),
 			),
 			builder: &testpkg.Builder{
 				KubeObjects: []runtime.Object{},
 				CertManagerObjects: []runtime.Object{gen.CertificateRequestFrom(baseCR,
 					// no data in annotation
-					gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CRPrivateKeyAnnotationKey: ""}),
+					gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CertificateRequestPrivateKeyAnnotationKey: ""}),
 				), baseIssuer},
 				ExpectedEvents: []string{
 					`Warning MissingAnnotation Annotation "cert-manager.io/private-key-secret-name" missing or reference empty: secret name missing`,
@@ -223,7 +223,7 @@ func TestSign(t *testing.T) {
 						"status",
 						gen.DefaultTestNamespace,
 						gen.CertificateRequestFrom(baseCR,
-							gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CRPrivateKeyAnnotationKey: ""}),
+							gen.SetCertificateRequestAnnotations(map[string]string{cmapi.CertificateRequestPrivateKeyAnnotationKey: ""}),
 							gen.SetCertificateRequestStatusCondition(cmapi.CertificateRequestCondition{
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
@@ -364,7 +364,7 @@ func TestSign(t *testing.T) {
 					gen.SetCertificateRequestCSR([]byte("this is a bad CSR")),
 				), baseIssuer},
 				ExpectedEvents: []string{
-					"Warning BadConfig Resource validation failed: spec.csr: Invalid value: []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x62, 0x61, 0x64, 0x20, 0x43, 0x53, 0x52}: failed to decode csr: error decoding certificate request PEM block",
+					"Warning BadConfig Resource validation failed: spec.request: Invalid value: []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x62, 0x61, 0x64, 0x20, 0x43, 0x53, 0x52}: failed to decode csr: error decoding certificate request PEM block",
 				},
 				ExpectedActions: []testpkg.Action{
 					testpkg.NewAction(coretesting.NewUpdateSubresourceAction(
@@ -377,7 +377,7 @@ func TestSign(t *testing.T) {
 								Type:               cmapi.CertificateRequestConditionReady,
 								Status:             cmmeta.ConditionFalse,
 								Reason:             cmapi.CertificateRequestReasonFailed,
-								Message:            "Resource validation failed: spec.csr: Invalid value: []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x62, 0x61, 0x64, 0x20, 0x43, 0x53, 0x52}: failed to decode csr: error decoding certificate request PEM block",
+								Message:            "Resource validation failed: spec.request: Invalid value: []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x62, 0x61, 0x64, 0x20, 0x43, 0x53, 0x52}: failed to decode csr: error decoding certificate request PEM block",
 								LastTransitionTime: &metaFixedClockStart,
 							}),
 							gen.SetCertificateRequestFailureTime(metaFixedClockStart),

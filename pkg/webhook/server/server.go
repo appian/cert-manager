@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -26,16 +27,23 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	admissionv1 "k8s.io/api/admission/v1"
 	admissionv1beta1 "k8s.io/api/admission/v1beta1"
+	apiextensionsinstall "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/install"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	ciphers "k8s.io/component-base/cli/flag"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 	"github.com/jetstack/cert-manager/pkg/util/profiling"
 	"github.com/jetstack/cert-manager/pkg/webhook/handlers"
+	servertls "github.com/jetstack/cert-manager/pkg/webhook/server/tls"
+	"github.com/jetstack/cert-manager/pkg/webhook/server/util"
 )
 
 var (
@@ -46,8 +54,9 @@ var (
 )
 
 func init() {
+	apiextensionsinstall.Install(defaultScheme)
 	admissionv1beta1.AddToScheme(defaultScheme)
-	apiextensionsv1beta1.AddToScheme(defaultScheme)
+	admissionv1.AddToScheme(defaultScheme)
 
 	// we need to add the options to empty v1
 	// TODO fix the server code to avoid this
@@ -61,6 +70,7 @@ func init() {
 		&metav1.APIGroupList{},
 		&metav1.APIGroup{},
 		&metav1.APIResourceList{},
+		&metav1.CreateOptions{},
 	)
 }
 
@@ -85,7 +95,7 @@ type Server struct {
 
 	// If specified, the server will listen with TLS using certificates
 	// provided by this CertificateSource.
-	CertificateSource CertificateSource
+	CertificateSource servertls.CertificateSource
 
 	ValidationWebhook handlers.ValidatingAdmissionHook
 	MutationWebhook   handlers.MutatingAdmissionHook
@@ -94,6 +104,16 @@ type Server struct {
 	// Log is an optional logger to write informational and error messages to.
 	// If not specified, no messages will be logged.
 	Log logr.Logger
+
+	// CipherSuites is the list of allowed cipher suites for the server.
+	// Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).
+	CipherSuites []string
+
+	// MinTLSVersion is the minimum TLS version supported.
+	// Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).
+	MinTLSVersion string
+
+	listener net.Listener
 }
 
 func (s *Server) Run(stopCh <-chan struct{}) error {
@@ -123,7 +143,7 @@ func (s *Server) Run(stopCh <-chan struct{}) error {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/healthz", s.handleHealthz)
 		mux.HandleFunc("/livez", s.handleLivez)
-		s.Log.Info("listening for insecure healthz connections", "address", s.HealthzAddr)
+		s.Log.V(logf.InfoLevel).Info("listening for insecure healthz connections", "address", s.HealthzAddr)
 		healthzChan = s.startServer(l, internalStopCh, mux)
 	}
 
@@ -132,18 +152,28 @@ func (s *Server) Run(stopCh <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
+	s.listener = l
 
 	// wrap the listener with TLS if a CertificateSource is provided
 	if s.CertificateSource != nil {
-		s.Log.Info("listening for secure connections", "address", s.ListenAddr)
+		s.Log.V(logf.InfoLevel).Info("listening for secure connections", "address", s.ListenAddr)
 		certSourceChan = s.startCertificateSource(internalStopCh)
+		cipherSuites, err := ciphers.TLSCipherSuites(s.CipherSuites)
+		if err != nil {
+			return err
+		}
+		minVersion, err := ciphers.TLSVersion(s.MinTLSVersion)
+		if err != nil {
+			return err
+		}
 		l = tls.NewListener(l, &tls.Config{
 			GetCertificate:           s.CertificateSource.GetCertificate,
-			MinVersion:               tls.VersionTLS12,
+			CipherSuites:             cipherSuites,
+			MinVersion:               minVersion,
 			PreferServerCipherSuites: true,
 		})
 	} else {
-		s.Log.Info("listening for insecure connections", "address", s.ListenAddr)
+		s.Log.V(logf.InfoLevel).Info("listening for insecure connections", "address", s.ListenAddr)
 	}
 
 	mux := http.NewServeMux()
@@ -152,7 +182,7 @@ func (s *Server) Run(stopCh <-chan struct{}) error {
 	mux.HandleFunc("/convert", s.handle(s.convert))
 	if s.EnablePprof {
 		profiling.Install(mux)
-		s.Log.Info("registered pprof handlers")
+		s.Log.V(logf.InfoLevel).Info("registered pprof handlers")
 	}
 	listenerChan := s.startServer(l, internalStopCh, mux)
 
@@ -173,11 +203,23 @@ func (s *Server) Run(stopCh <-chan struct{}) error {
 	close(internalStopCh)
 	shutdown = true
 
-	s.Log.Info("waiting for server to shutdown")
+	s.Log.V(logf.DebugLevel).Info("waiting for server to shutdown")
 	waitForAll(healthzChan, certSourceChan, listenerChan)
-	s.Log.Info("server shutdown successfully")
+	s.Log.V(logf.InfoLevel).Info("server shutdown successfully")
 
 	return err
+}
+
+// Port returns the port number that the webhook listener is listening on
+func (s *Server) Port() (int, error) {
+	if s.listener == nil {
+		return 0, errors.New("Run() must be called before Port()")
+	}
+	tcpAddr, ok := s.listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, errors.New("unexpected listen address type (expected tcp)")
+	}
+	return tcpAddr.Port, nil
 }
 
 func (s *Server) startServer(l net.Listener, stopCh <-chan struct{}, handle http.Handler) <-chan error {
@@ -199,7 +241,7 @@ func (s *Server) startServer(l net.Listener, stopCh <-chan struct{}, handle http
 				s.Log.Error(err, "failed to gracefully shutdown http server")
 				ch <- err
 			}
-			s.Log.Info("shutdown HTTP server gracefully")
+			s.Log.V(logf.DebugLevel).Info("shutdown HTTP server gracefully")
 		}
 	}()
 	return ch
@@ -248,28 +290,78 @@ func (s *Server) scheme() *runtime.Scheme {
 	return s.Scheme
 }
 
-func (s *Server) validate(obj runtime.Object) runtime.Object {
-	review := obj.(*admissionv1beta1.AdmissionReview)
+func (s *Server) validate(obj runtime.Object) (runtime.Object, error) {
+	outputVersion := admissionv1.SchemeGroupVersion
+	review, isV1 := obj.(*admissionv1.AdmissionReview)
+	if !isV1 {
+		outputVersion = admissionv1beta1.SchemeGroupVersion
+		reviewv1beta1, isv1beta1 := obj.(*admissionv1beta1.AdmissionReview)
+		if !isv1beta1 {
+			return nil, errors.New("request is not of type apiextensions v1 or v1beta1")
+		}
+		review = &admissionv1.AdmissionReview{}
+		util.Convert_v1beta1_AdmissionReview_To_admission_AdmissionReview(reviewv1beta1, review)
+	}
 	resp := s.ValidationWebhook.Validate(review.Request)
 	review.Response = resp
-	return review
+
+	// reply v1
+	if outputVersion.Version == admissionv1.SchemeGroupVersion.Version {
+		return review, nil
+	}
+
+	// reply v1beta1
+	reviewv1beta1 := &admissionv1beta1.AdmissionReview{}
+	util.Convert_admission_AdmissionReview_To_v1beta1_AdmissionReview(review, reviewv1beta1)
+	return reviewv1beta1, nil
 }
 
-func (s *Server) mutate(obj runtime.Object) runtime.Object {
-	review := obj.(*admissionv1beta1.AdmissionReview)
+func (s *Server) mutate(obj runtime.Object) (runtime.Object, error) {
+	outputVersion := admissionv1.SchemeGroupVersion
+	review, isV1 := obj.(*admissionv1.AdmissionReview)
+	if !isV1 {
+		outputVersion = admissionv1beta1.SchemeGroupVersion
+		reviewv1beta1, isv1beta1 := obj.(*admissionv1beta1.AdmissionReview)
+		if !isv1beta1 {
+			return nil, errors.New("request is not of type apiextensions v1 or v1beta1")
+		}
+		review = &admissionv1.AdmissionReview{}
+		util.Convert_v1beta1_AdmissionReview_To_admission_AdmissionReview(reviewv1beta1, review)
+	}
 	resp := s.MutationWebhook.Mutate(review.Request)
 	review.Response = resp
-	return review
+
+	// reply v1
+	if outputVersion.Version == admissionv1.SchemeGroupVersion.Version {
+		return review, nil
+	}
+
+	// reply v1beta1
+	reviewv1beta1 := &admissionv1beta1.AdmissionReview{}
+	util.Convert_admission_AdmissionReview_To_v1beta1_AdmissionReview(review, reviewv1beta1)
+	return reviewv1beta1, nil
 }
 
-func (s *Server) convert(obj runtime.Object) runtime.Object {
-	review := obj.(*apiextensionsv1beta1.ConversionReview)
-	resp := s.ConversionWebhook.Convert(review.Request)
-	review.Response = resp
-	return review
+func (s *Server) convert(obj runtime.Object) (runtime.Object, error) {
+	switch review := obj.(type) {
+	case *apiextensionsv1.ConversionReview:
+		if review.Request == nil {
+			return nil, errors.New("review.request was nil")
+		}
+		review.Response = s.ConversionWebhook.ConvertV1(review.Request)
+		return review, nil
+	case *apiextensionsv1beta1.ConversionReview:
+		if review.Request == nil {
+			return nil, errors.New("review.request was nil")
+		}
+		review.Response = s.ConversionWebhook.ConvertV1Beta1(review.Request)
+		return review, nil
+	default:
+		return nil, fmt.Errorf("unsupported conversion review type: %T", review)
+	}
 }
 
-func (s *Server) handle(inner func(runtime.Object) runtime.Object) func(w http.ResponseWriter, req *http.Request) {
+func (s *Server) handle(inner func(runtime.Object) (runtime.Object, error)) func(w http.ResponseWriter, req *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 
@@ -291,7 +383,12 @@ func (s *Server) handle(inner func(runtime.Object) runtime.Object) func(w http.R
 			return
 		}
 
-		result := inner(obj)
+		result, err := inner(obj)
+		if err != nil {
+			s.Log.Error(err, "failed to process webhook request")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if err := codec.Encode(result, w); err != nil {
 			s.Log.Error(err, "failed to encode response body")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -304,7 +401,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
 	if s.CertificateSource != nil && !s.CertificateSource.Healthy() {
-		s.Log.Info("Health check failed as CertificateSource is unhealthy")
+		s.Log.V(logf.WarnLevel).Info("Health check failed as CertificateSource is unhealthy")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

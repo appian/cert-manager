@@ -9,6 +9,7 @@ this directory.
 package util
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -85,7 +86,7 @@ var checkResolvConfServersTests = []struct {
 	defaults []string
 }{
 	{"testdata/resolv.conf.1", []string{"10.200.3.249:53", "10.200.3.250:5353", "[2001:4860:4860::8844]:53", "[10.0.0.1]:5353"}, []string{"127.0.0.1:53"}},
-	{"testdata/resolv.conf.nonexistant", []string{"127.0.0.1:53"}, []string{"127.0.0.1:53"}},
+	{"testdata/resolv.conf.nonexistent", []string{"127.0.0.1:53"}, []string{"127.0.0.1:53"}},
 }
 
 func TestMatchCAA(t *testing.T) {
@@ -265,7 +266,7 @@ func TestValidateCAA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	// now ask, expecting a CA that wont match
+	// now ask, expecting a CA that won't match
 	err = ValidateCAA("www.google.com", []string{"daniel.homebrew.ca"}, false, RecursiveNameservers)
 	if err == nil {
 		t.Fatalf("expected err, got success")
@@ -282,5 +283,111 @@ func TestValidateCAA(t *testing.T) {
 	err = ValidateCAA("www.example.org", []string{"daniel.homebrew.ca"}, false, RecursiveNameservers)
 	if err != nil {
 		t.Fatalf("expected err, got %s", err)
+	}
+}
+
+func Test_followCNAMEs(t *testing.T) {
+	dnsQuery = func(fqdn string, rtype uint16, nameservers []string, recursive bool) (in *dns.Msg, err error) {
+		msg := &dns.Msg{}
+		msg.Rcode = dns.RcodeSuccess
+		switch fqdn {
+		case "test1.example.com":
+			msg.Answer = []dns.RR{
+				&dns.CNAME{
+					Target: "test2.example.com",
+				},
+			}
+		case "test2.example.com":
+			msg.Answer = []dns.RR{
+				&dns.CNAME{
+
+					Target: "test3.example.com",
+				},
+			}
+		case "recursive.example.com":
+			msg.Answer = []dns.RR{
+				&dns.CNAME{
+
+					Target: "recursive1.example.com",
+				},
+			}
+		case "recursive1.example.com":
+			msg.Answer = []dns.RR{
+				&dns.CNAME{
+					Target: "recursive.example.com",
+				},
+			}
+		case "error.example.com":
+			return nil, fmt.Errorf("Error while mocking resolve for %q", fqdn)
+		}
+
+		// inject fqdn in headers
+		for _, rr := range msg.Answer {
+			if cn, ok := rr.(*dns.CNAME); ok {
+				cn.Hdr = dns.RR_Header{
+					Name: fqdn,
+				}
+			}
+		}
+
+		return msg, nil
+	}
+	defer func() {
+		// restore the mock
+		dnsQuery = DNSQuery
+	}()
+	type args struct {
+		fqdn        string
+		nameservers []string
+		fqdnChain   []string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "Resolve CNAME 3 down",
+			args: args{
+				fqdn: "test1.example.com",
+			},
+			want:    "test3.example.com",
+			wantErr: false,
+		},
+		{
+			name: "Resolve CNAME 1 down",
+			args: args{
+				fqdn: "test3.example.com",
+			},
+			want:    "test3.example.com",
+			wantErr: false,
+		},
+		{
+			name: "Error when DNS fails",
+			args: args{
+				fqdn: "error.example.com",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Error on recursive CNAME",
+			args: args{
+				fqdn: "recursive.example.com",
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := followCNAMEs(tt.args.fqdn, tt.args.nameservers, tt.args.fqdnChain...)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("followCNAMEs() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("followCNAMEs() got = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

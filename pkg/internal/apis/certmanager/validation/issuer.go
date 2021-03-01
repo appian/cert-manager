@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,27 +25,31 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
-	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	cmacme "github.com/jetstack/cert-manager/pkg/internal/apis/acme"
+	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager"
 	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/validation/util"
+	cmmeta "github.com/jetstack/cert-manager/pkg/internal/apis/meta"
 )
 
 // Validation functions for cert-manager v1alpha2 Issuer types
 
 func ValidateIssuer(obj runtime.Object) field.ErrorList {
-	iss := obj.(*v1alpha2.Issuer)
+	iss := obj.(*certmanager.Issuer)
 	allErrs := ValidateIssuerSpec(&iss.Spec, field.NewPath("spec"))
 	return allErrs
 }
 
-func ValidateIssuerSpec(iss *v1alpha2.IssuerSpec, fldPath *field.Path) field.ErrorList {
-	el := field.ErrorList{}
-	el = ValidateIssuerConfig(&iss.IssuerConfig, fldPath)
-	return el
+func ValidateUpdateIssuer(oldObj, obj runtime.Object) field.ErrorList {
+	iss := obj.(*certmanager.Issuer)
+	allErrs := ValidateIssuerSpec(&iss.Spec, field.NewPath("spec"))
+	return allErrs
 }
 
-func ValidateIssuerConfig(iss *v1alpha2.IssuerConfig, fldPath *field.Path) field.ErrorList {
+func ValidateIssuerSpec(iss *certmanager.IssuerSpec, fldPath *field.Path) field.ErrorList {
+	return ValidateIssuerConfig(&iss.IssuerConfig, fldPath)
+}
+
+func ValidateIssuerConfig(iss *certmanager.IssuerConfig, fldPath *field.Path) field.ErrorList {
 	numConfigs := 0
 	el := field.ErrorList{}
 	if iss.ACME != nil {
@@ -177,19 +181,24 @@ func ValidateACMEIssuerChallengeSolverHTTP01IngressConfig(ingress *cmacme.ACMECh
 	return el
 }
 
-func ValidateCAIssuerConfig(iss *v1alpha2.CAIssuer, fldPath *field.Path) field.ErrorList {
+func ValidateCAIssuerConfig(iss *certmanager.CAIssuer, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
 	if len(iss.SecretName) == 0 {
 		el = append(el, field.Required(fldPath.Child("secretName"), ""))
 	}
+	for i, ocspURL := range iss.OCSPServers {
+		if ocspURL == "" {
+			el = append(el, field.Invalid(fldPath.Child("ocspServer").Index(i), ocspURL, "must be a valid URL, e.g., http://ocsp.int-x3.letsencrypt.org"))
+		}
+	}
 	return el
 }
 
-func ValidateSelfSignedIssuerConfig(iss *v1alpha2.SelfSignedIssuer, fldPath *field.Path) field.ErrorList {
+func ValidateSelfSignedIssuerConfig(iss *certmanager.SelfSignedIssuer, fldPath *field.Path) field.ErrorList {
 	return nil
 }
 
-func ValidateVaultIssuerConfig(iss *v1alpha2.VaultIssuer, fldPath *field.Path) field.ErrorList {
+func ValidateVaultIssuerConfig(iss *certmanager.VaultIssuer, fldPath *field.Path) field.ErrorList {
 	el := field.ErrorList{}
 	if len(iss.Server) == 0 {
 		el = append(el, field.Required(fldPath.Child("server"), ""))
@@ -212,9 +221,39 @@ func ValidateVaultIssuerConfig(iss *v1alpha2.VaultIssuer, fldPath *field.Path) f
 	// TODO: add validation for Vault authentication types
 }
 
-func ValidateVenafiIssuerConfig(iss *v1alpha2.VenafiIssuer, fldPath *field.Path) field.ErrorList {
-	//TODO: make extended validation fro fake\tpp\cloud modes
-	return nil
+func ValidateVenafiTPP(tpp *certmanager.VenafiTPP, fldPath *field.Path) (el field.ErrorList) {
+	if tpp.URL == "" {
+		el = append(el, field.Required(fldPath.Child("url"), ""))
+	}
+	return el
+}
+
+func ValidateVenafiCloud(c *certmanager.VenafiCloud, fldPath *field.Path) (el field.ErrorList) {
+	return el
+}
+
+func ValidateVenafiIssuerConfig(iss *certmanager.VenafiIssuer, fldPath *field.Path) (el field.ErrorList) {
+	if iss.Zone == "" {
+		el = append(el, field.Required(fldPath.Child("zone"), ""))
+	}
+	unionCount := 0
+	if iss.TPP != nil {
+		unionCount++
+		el = append(el, ValidateVenafiTPP(iss.TPP, fldPath.Child("tpp"))...)
+	}
+	if iss.Cloud != nil {
+		unionCount++
+		el = append(el, ValidateVenafiCloud(iss.Cloud, fldPath.Child("cloud"))...)
+	}
+
+	if unionCount == 0 {
+		el = append(el, field.Required(fldPath, "please supply one of: tpp, cloud"))
+	}
+	if unionCount > 1 {
+		el = append(el, field.Forbidden(fldPath, "please supply one of: tpp, cloud"))
+	}
+
+	return el
 }
 
 // This list must be kept in sync with pkg/issuer/acme/dns/rfc2136/rfc2136.go
@@ -250,42 +289,52 @@ func ValidateACMEChallengeSolverDNS01(p *cmacme.ACMEChallengeSolverDNS01, fldPat
 	}
 	if p.AzureDNS != nil {
 		if numProviders > 0 {
-			el = append(el, field.Forbidden(fldPath.Child("azuredns"), "may not specify more than one provider type"))
+			el = append(el, field.Forbidden(fldPath.Child("azureDNS"), "may not specify more than one provider type"))
 		} else {
 			numProviders++
-			el = append(el, ValidateSecretKeySelector(&p.AzureDNS.ClientSecret, fldPath.Child("azuredns", "clientSecretSecretRef"))...)
-			if len(p.AzureDNS.ClientID) == 0 {
-				el = append(el, field.Required(fldPath.Child("azuredns", "clientID"), ""))
+			// if ClientID or ClientSecret or TenantID are defined then all of ClientID, ClientSecret and tenantID must be defined
+			// We check things separately because
+			if len(p.AzureDNS.ClientID) > 0 || len(p.AzureDNS.TenantID) > 0 || p.AzureDNS.ClientSecret != nil {
+				if len(p.AzureDNS.ClientID) == 0 {
+					el = append(el, field.Required(fldPath.Child("azureDNS", "clientID"), ""))
+				}
+				if p.AzureDNS.ClientSecret == nil {
+					el = append(el, field.Required(fldPath.Child("azureDNS", "clientSecretSecretRef"), ""))
+				} else {
+					el = append(el, ValidateSecretKeySelector(p.AzureDNS.ClientSecret, fldPath.Child("azureDNS", "clientSecretSecretRef"))...)
+				}
+				if len(p.AzureDNS.TenantID) == 0 {
+					el = append(el, field.Required(fldPath.Child("azureDNS", "tenantID"), ""))
+				}
 			}
+			// SubscriptionID must always be defined
 			if len(p.AzureDNS.SubscriptionID) == 0 {
-				el = append(el, field.Required(fldPath.Child("azuredns", "subscriptionID"), ""))
+				el = append(el, field.Required(fldPath.Child("azureDNS", "subscriptionID"), ""))
 			}
-			if len(p.AzureDNS.TenantID) == 0 {
-				el = append(el, field.Required(fldPath.Child("azuredns", "tenantID"), ""))
-			}
+			// ResourceGroupName must always be defined
 			if len(p.AzureDNS.ResourceGroupName) == 0 {
-				el = append(el, field.Required(fldPath.Child("azuredns", "resourceGroupName"), ""))
+				el = append(el, field.Required(fldPath.Child("azureDNS", "resourceGroupName"), ""))
 			}
 			switch p.AzureDNS.Environment {
 			case "", cmacme.AzurePublicCloud, cmacme.AzureChinaCloud, cmacme.AzureGermanCloud, cmacme.AzureUSGovernmentCloud:
 			default:
-				el = append(el, field.Invalid(fldPath.Child("azuredns", "environment"), p.AzureDNS.Environment,
+				el = append(el, field.Invalid(fldPath.Child("azureDNS", "environment"), p.AzureDNS.Environment,
 					fmt.Sprintf("must be either empty or one of %s, %s, %s or %s", cmacme.AzurePublicCloud, cmacme.AzureChinaCloud, cmacme.AzureGermanCloud, cmacme.AzureUSGovernmentCloud)))
 			}
 		}
 	}
 	if p.CloudDNS != nil {
 		if numProviders > 0 {
-			el = append(el, field.Forbidden(fldPath.Child("clouddns"), "may not specify more than one provider type"))
+			el = append(el, field.Forbidden(fldPath.Child("cloudDNS"), "may not specify more than one provider type"))
 		} else {
 			numProviders++
 			// if service account is not nil we validate the entire secret key
 			// selector
 			if p.CloudDNS.ServiceAccount != nil {
-				el = append(el, ValidateSecretKeySelector(p.CloudDNS.ServiceAccount, fldPath.Child("clouddns", "serviceAccountSecretRef"))...)
+				el = append(el, ValidateSecretKeySelector(p.CloudDNS.ServiceAccount, fldPath.Child("cloudDNS", "serviceAccountSecretRef"))...)
 			}
 			if len(p.CloudDNS.Project) == 0 {
-				el = append(el, field.Required(fldPath.Child("clouddns", "project"), ""))
+				el = append(el, field.Required(fldPath.Child("cloudDNS", "project"), ""))
 			}
 		}
 	}
@@ -306,7 +355,7 @@ func ValidateACMEChallengeSolverDNS01(p *cmacme.ACMEChallengeSolverDNS01, fldPat
 			if p.Cloudflare.APIKey == nil && p.Cloudflare.APIToken == nil {
 				el = append(el, field.Required(fldPath.Child("cloudflare"), "apiKeySecretRef or apiTokenSecretRef is required"))
 			}
-			if len(p.Cloudflare.Email) == 0 {
+			if len(p.Cloudflare.Email) == 0 && p.Cloudflare.APIKey != nil {
 				el = append(el, field.Required(fldPath.Child("cloudflare", "email"), ""))
 			}
 		}
@@ -324,9 +373,9 @@ func ValidateACMEChallengeSolverDNS01(p *cmacme.ACMEChallengeSolverDNS01, fldPat
 	}
 	if p.AcmeDNS != nil {
 		numProviders++
-		el = append(el, ValidateSecretKeySelector(&p.AcmeDNS.AccountSecret, fldPath.Child("acmedns", "accountSecretRef"))...)
+		el = append(el, ValidateSecretKeySelector(&p.AcmeDNS.AccountSecret, fldPath.Child("acmeDNS", "accountSecretRef"))...)
 		if len(p.AcmeDNS.Host) == 0 {
-			el = append(el, field.Required(fldPath.Child("acmedns", "host"), ""))
+			el = append(el, field.Required(fldPath.Child("acmeDNS", "host"), ""))
 		}
 	}
 
@@ -348,7 +397,7 @@ func ValidateACMEChallengeSolverDNS01(p *cmacme.ACMEChallengeSolverDNS01, fldPat
 				el = append(el, field.Required(fldPath.Child("rfc2136", "nameserver"), ""))
 			} else {
 				if _, err := util.ValidNameserver(p.RFC2136.Nameserver); err != nil {
-					el = append(el, field.Invalid(fldPath.Child("rfc2136", "nameserver"), "", "Nameserver invalid. Check the documentation for details."))
+					el = append(el, field.Invalid(fldPath.Child("rfc2136", "nameserver"), p.RFC2136.Nameserver, "nameserver must be set in the form host:port where host is an IPv4 address, an enclosed IPv6 address or a hostname and port is an optional port number."))
 				}
 			}
 			if len(p.RFC2136.TSIGAlgorithm) > 0 {

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/pflag"
 
 	cm "github.com/jetstack/cert-manager/pkg/apis/certmanager"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
 	challengescontroller "github.com/jetstack/cert-manager/pkg/controller/acmechallenges"
 	orderscontroller "github.com/jetstack/cert-manager/pkg/controller/acmeorders"
 	cracmecontroller "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/acme"
@@ -32,17 +31,24 @@ import (
 	crselfsignedcontroller "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/selfsigned"
 	crvaultcontroller "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/vault"
 	crvenaficontroller "github.com/jetstack/cert-manager/pkg/controller/certificaterequests/venafi"
-	certificatescontroller "github.com/jetstack/cert-manager/pkg/controller/certificates"
+	"github.com/jetstack/cert-manager/pkg/controller/certificates/issuing"
+	"github.com/jetstack/cert-manager/pkg/controller/certificates/keymanager"
+	certificatesmetricscontroller "github.com/jetstack/cert-manager/pkg/controller/certificates/metrics"
+	"github.com/jetstack/cert-manager/pkg/controller/certificates/readiness"
+	"github.com/jetstack/cert-manager/pkg/controller/certificates/requestmanager"
+	"github.com/jetstack/cert-manager/pkg/controller/certificates/trigger"
 	clusterissuerscontroller "github.com/jetstack/cert-manager/pkg/controller/clusterissuers"
 	ingressshimcontroller "github.com/jetstack/cert-manager/pkg/controller/ingress-shim"
 	issuerscontroller "github.com/jetstack/cert-manager/pkg/controller/issuers"
-	"github.com/jetstack/cert-manager/pkg/controller/webhookbootstrap"
 	"github.com/jetstack/cert-manager/pkg/util"
 )
 
 type ControllerOptions struct {
-	APIServerHost            string
-	Kubeconfig               string
+	APIServerHost      string
+	Kubeconfig         string
+	KubernetesAPIQPS   float32
+	KubernetesAPIBurst int
+
 	ClusterResourceNamespace string
 	Namespace                string
 
@@ -62,7 +68,6 @@ type ControllerOptions struct {
 
 	ClusterIssuerAmbientCredentials bool
 	IssuerAmbientCredentials        bool
-	RenewBeforeExpiryDuration       time.Duration
 
 	// Default issuer/certificates details consumed by ingress-shim
 	DefaultIssuerName                 string
@@ -80,25 +85,22 @@ type ControllerOptions struct {
 
 	MaxConcurrentChallenges int
 
-	// Namespace is the namespace the webhook CA and serving secret will be
-	// created in.
-	// If not specified, it will default to the same namespace as cert-manager.
-	WebhookNamespace string
+	// The host and port address, separated by a ':', that the Prometheus server
+	// should expose metrics on.
+	MetricsListenAddress string
+	// EnablePprof controls whether net/http/pprof handlers are registered with
+	// the HTTP listener.
+	EnablePprof bool
 
-	// CASecretName is the name of the secret containing the webhook's root CA
-	WebhookCASecretName string
-
-	// ServingSecretName is the name of the secret containing the webhook's
-	// serving certificate
-	WebhookServingSecretName string
-
-	// DNSNames are the dns names that should be set on the serving certificate
-	WebhookDNSNames []string
+	DNS01CheckRetryPeriod time.Duration
 }
 
 const (
-	defaultAPIServerHost            = ""
-	defaultKubeconfig               = ""
+	defaultAPIServerHost              = ""
+	defaultKubeconfig                 = ""
+	defaultKubernetesAPIQPS   float32 = 20
+	defaultKubernetesAPIBurst         = 50
+
 	defaultClusterResourceNamespace = "kube-system"
 	defaultNamespace                = ""
 
@@ -110,32 +112,19 @@ const (
 
 	defaultClusterIssuerAmbientCredentials = true
 	defaultIssuerAmbientCredentials        = false
-	defaultRenewBeforeExpiryDuration       = cmapi.DefaultRenewBefore
 
-	defaultTLSACMEIssuerName           = ""
-	defaultTLSACMEIssuerKind           = "Issuer"
-	defaultTLSACMEIssuerGroup          = cm.GroupName
-	defaultACMEIssuerChallengeType     = "http01"
-	defaultACMEIssuerDNS01ProviderName = ""
-	defaultEnableCertificateOwnerRef   = false
+	defaultTLSACMEIssuerName         = ""
+	defaultTLSACMEIssuerKind         = "Issuer"
+	defaultTLSACMEIssuerGroup        = cm.GroupName
+	defaultEnableCertificateOwnerRef = false
 
 	defaultDNS01RecursiveNameserversOnly = false
 
 	defaultMaxConcurrentChallenges = 60
 
-	defaultWebhookNamespace         = "cert-manager"
-	defaultWebhookCASecretName      = "cert-manager-webhook-ca"
-	defaultWebhookServingSecretName = "cert-manager-webhook-tls"
-)
+	defaultPrometheusMetricsServerAddress = "0.0.0.0:9402"
 
-var (
-	defaultWebhookDNSNames = []string{
-		"cert-manager-webhook",
-		"cert-manager-webhook.cert-manager",
-		"cert-manager-webhook.cert-manager.svc",
-		"cert-manager-webhook.cert-manager.svc.cluster",
-		"cert-manager-webhook.cert-manager.svc.cluster.local",
-	}
+	defaultDNS01CheckRetryPeriod = 10 * time.Second
 )
 
 var (
@@ -150,17 +139,21 @@ var (
 	defaultEnabledControllers = []string{
 		issuerscontroller.ControllerName,
 		clusterissuerscontroller.ControllerName,
-		certificatescontroller.ControllerName,
+		certificatesmetricscontroller.ControllerName,
 		ingressshimcontroller.ControllerName,
 		orderscontroller.ControllerName,
 		challengescontroller.ControllerName,
-		webhookbootstrap.ControllerName,
 		cracmecontroller.CRControllerName,
 		crcacontroller.CRControllerName,
 		crselfsignedcontroller.CRControllerName,
 		crvaultcontroller.CRControllerName,
 		crvenaficontroller.CRControllerName,
-		certificatescontroller.ControllerName,
+		// certificate controllers
+		trigger.ControllerName,
+		issuing.ControllerName,
+		keymanager.ControllerName,
+		requestmanager.ControllerName,
+		readiness.ControllerName,
 	}
 )
 
@@ -168,6 +161,8 @@ func NewControllerOptions() *ControllerOptions {
 	return &ControllerOptions{
 		APIServerHost:                     defaultAPIServerHost,
 		ClusterResourceNamespace:          defaultClusterResourceNamespace,
+		KubernetesAPIQPS:                  defaultKubernetesAPIQPS,
+		KubernetesAPIBurst:                defaultKubernetesAPIBurst,
 		Namespace:                         defaultNamespace,
 		LeaderElect:                       defaultLeaderElect,
 		LeaderElectionNamespace:           defaultLeaderElectionNamespace,
@@ -177,7 +172,6 @@ func NewControllerOptions() *ControllerOptions {
 		EnabledControllers:                defaultEnabledControllers,
 		ClusterIssuerAmbientCredentials:   defaultClusterIssuerAmbientCredentials,
 		IssuerAmbientCredentials:          defaultIssuerAmbientCredentials,
-		RenewBeforeExpiryDuration:         defaultRenewBeforeExpiryDuration,
 		DefaultIssuerName:                 defaultTLSACMEIssuerName,
 		DefaultIssuerKind:                 defaultTLSACMEIssuerKind,
 		DefaultIssuerGroup:                defaultTLSACMEIssuerGroup,
@@ -185,6 +179,9 @@ func NewControllerOptions() *ControllerOptions {
 		DNS01RecursiveNameservers:         []string{},
 		DNS01RecursiveNameserversOnly:     defaultDNS01RecursiveNameserversOnly,
 		EnableCertificateOwnerRef:         defaultEnableCertificateOwnerRef,
+		MetricsListenAddress:              defaultPrometheusMetricsServerAddress,
+		DNS01CheckRetryPeriod:             defaultDNS01CheckRetryPeriod,
+		EnablePprof:                       false,
 	}
 }
 
@@ -194,6 +191,8 @@ func (s *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
 		"will be attempted.")
 	fs.StringVar(&s.Kubeconfig, "kubeconfig", defaultKubeconfig, ""+
 		"Paths to a kubeconfig. Only required if out-of-cluster.")
+	fs.Float32Var(&s.KubernetesAPIQPS, "kube-api-qps", defaultKubernetesAPIQPS, "indicates the maximum queries-per-second requests to the Kubernetes apiserver")
+	fs.IntVar(&s.KubernetesAPIBurst, "kube-api-burst", defaultKubernetesAPIBurst, "the maximum burst queries-per-second of requests sent to the Kubernetes apiserver")
 	fs.StringVar(&s.ClusterResourceNamespace, "cluster-resource-namespace", defaultClusterResourceNamespace, ""+
 		"Namespace to store resources owned by cluster scoped resources such as ClusterIssuer in. "+
 		"This must be specified if ClusterIssuers are enabled.")
@@ -246,10 +245,6 @@ func (s *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
 		"Whether an issuer may make use of ambient credentials. 'Ambient Credentials' are credentials drawn from the environment, metadata services, or local files which are not explicitly configured in the Issuer API object. "+
 		"When this flag is enabled, the following sources for credentials are also used: "+
 		"AWS - All sources the Go SDK defaults to, notably including any EC2 IAM roles available via instance metadata.")
-	fs.DurationVar(&s.RenewBeforeExpiryDuration, "renew-before-expiry-duration", defaultRenewBeforeExpiryDuration, ""+
-		"The default 'renew before expiry' time for Certificates. "+
-		"Once a certificate is within this duration until expiry, a new Certificate "+
-		"will be attempted to be issued.")
 	fs.StringSliceVar(&s.DefaultAutoCertificateAnnotations, "auto-certificate-annotations", defaultAutoCertificateAnnotations, ""+
 		"The annotation consumed by the ingress-shim controller to indicate a ingress is requesting a certificate")
 
@@ -260,7 +255,7 @@ func (s *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.DefaultIssuerGroup, "default-issuer-group", defaultTLSACMEIssuerGroup, ""+
 		"Group of the Issuer to use when the tls is requested but issuer group is not specified on the ingress resource.")
 	fs.StringSliceVar(&s.DNS01RecursiveNameservers, "dns01-recursive-nameservers",
-		[]string{}, "A list of comma seperated dns server endpoints used for "+
+		[]string{}, "A list of comma separated dns server endpoints used for "+
 			"DNS01 check requests. This should be a list containing host and "+
 			"port, for example 8.8.8.8:53,8.8.4.4:53")
 	fs.BoolVar(&s.DNS01RecursiveNameserversOnly, "dns01-recursive-nameservers-only",
@@ -271,7 +266,7 @@ func (s *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
 			"Enabling this option could cause the DNS01 self check to take longer "+
 			"due to caching performed by the recursive nameservers.")
 	fs.StringSliceVar(&s.DNS01RecursiveNameservers, "dns01-self-check-nameservers",
-		[]string{}, "A list of comma seperated dns server endpoints used for "+
+		[]string{}, "A list of comma separated dns server endpoints used for "+
 			"DNS01 check requests. This should be a list containing host and port, "+
 			"for example 8.8.8.8:53,8.8.4.4:53")
 	fs.MarkDeprecated("dns01-self-check-nameservers", "Deprecated in favour of dns01-recursive-nameservers")
@@ -280,15 +275,14 @@ func (s *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
 		"When this flag is enabled, the secret will be automatically removed when the certificate resource is deleted.")
 	fs.IntVar(&s.MaxConcurrentChallenges, "max-concurrent-challenges", defaultMaxConcurrentChallenges, ""+
 		"The maximum number of challenges that can be scheduled as 'processing' at once.")
+	fs.DurationVar(&s.DNS01CheckRetryPeriod, "dns01-check-retry-period", defaultDNS01CheckRetryPeriod, ""+
+		"The duration the controller should wait between checking if a ACME dns entry exists."+
+		"This should be a valid duration string, for example 180s or 1h")
 
-	fs.StringVar(&s.WebhookNamespace, "webhook-namespace", defaultWebhookNamespace, "The namespace the webhook component is running in, "+
-		"used for provisioning TLS certificates for the conversion webhook.")
-	fs.StringVar(&s.WebhookCASecretName, "webhook-ca-secret", defaultWebhookCASecretName, "The name of the Secret used to store the webhook's "+
-		"CA data.")
-	fs.StringVar(&s.WebhookServingSecretName, "webhook-serving-secret", defaultWebhookServingSecretName, "The name of the Secret used to store the webhook's "+
-		"serving certificate.")
-	fs.StringSliceVar(&s.WebhookDNSNames, "webhook-dns-names", defaultWebhookDNSNames, "Comma-separated list of DNS names that should be present on "+
-		"the webhook's serving certificate.")
+	fs.StringVar(&s.MetricsListenAddress, "metrics-listen-address", defaultPrometheusMetricsServerAddress, ""+
+		"The host and port that the metrics endpoint should listen on.")
+	fs.BoolVar(&s.EnablePprof, "enable-profiling", false, ""+
+		"Enable profiling for controller.")
 }
 
 func (o *ControllerOptions) Validate() error {
@@ -299,6 +293,18 @@ func (o *ControllerOptions) Validate() error {
 		return fmt.Errorf("invalid default issuer kind: %v", o.DefaultIssuerKind)
 	}
 
+	if o.KubernetesAPIBurst <= 0 {
+		return fmt.Errorf("invalid value for kube-api-burst: %v must be higher than 0", o.KubernetesAPIBurst)
+	}
+
+	if o.KubernetesAPIQPS <= 0 {
+		return fmt.Errorf("invalid value for kube-api-qps: %v must be higher than 0", o.KubernetesAPIQPS)
+	}
+
+	if float32(o.KubernetesAPIBurst) < o.KubernetesAPIQPS {
+		return fmt.Errorf("invalid value for kube-api-burst: %v must be higher or equal to kube-api-qps: %v", o.KubernetesAPIQPS, o.KubernetesAPIQPS)
+	}
+
 	for _, server := range o.DNS01RecursiveNameservers {
 		// ensure all servers have a port number
 		_, _, err := net.SplitHostPort(server)
@@ -306,5 +312,6 @@ func (o *ControllerOptions) Validate() error {
 			return fmt.Errorf("invalid DNS server (%v): %v", err, server)
 		}
 	}
+
 	return nil
 }

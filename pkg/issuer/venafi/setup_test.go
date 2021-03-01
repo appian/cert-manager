@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,16 +17,19 @@ limitations under the License.
 package venafi
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	logf "github.com/jetstack/cert-manager/pkg/logs"
+
 	corelisters "k8s.io/client-go/listers/core/v1"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller"
 	controllertest "github.com/jetstack/cert-manager/pkg/controller/test"
-	internalvenafi "github.com/jetstack/cert-manager/pkg/internal/venafi"
-	internalvenafifake "github.com/jetstack/cert-manager/pkg/internal/venafi/fake"
+	"github.com/jetstack/cert-manager/pkg/issuer/venafi/client"
+	internalvenafifake "github.com/jetstack/cert-manager/pkg/issuer/venafi/client/fake"
 	"github.com/jetstack/cert-manager/pkg/util"
 	"github.com/jetstack/cert-manager/test/unit/gen"
 )
@@ -35,12 +38,12 @@ func TestSetup(t *testing.T) {
 	baseIssuer := gen.Issuer("test-issuer")
 
 	failingClientBuilder := func(string, corelisters.SecretLister,
-		cmapi.GenericIssuer) (internalvenafi.Interface, error) {
+		cmapi.GenericIssuer) (client.Interface, error) {
 		return nil, errors.New("this is an error")
 	}
 
 	failingPingClient := func(string, corelisters.SecretLister,
-		cmapi.GenericIssuer) (internalvenafi.Interface, error) {
+		cmapi.GenericIssuer) (client.Interface, error) {
 		return &internalvenafifake.Venafi{
 			PingFn: func() error {
 				return errors.New("this is a ping error")
@@ -49,7 +52,7 @@ func TestSetup(t *testing.T) {
 	}
 
 	pingClient := func(string, corelisters.SecretLister,
-		cmapi.GenericIssuer) (internalvenafi.Interface, error) {
+		cmapi.GenericIssuer) (client.Interface, error) {
 		return &internalvenafifake.Venafi{
 			PingFn: func() error {
 				return nil
@@ -62,6 +65,11 @@ func TestSetup(t *testing.T) {
 			clientBuilder: failingClientBuilder,
 			expectedErr:   true,
 			iss:           baseIssuer.DeepCopy(),
+			expectedCondition: &cmapi.IssuerCondition{
+				Reason:  "ErrorSetup",
+				Message: "Failed to setup Venafi issuer: error building client: this is an error",
+				Status:  "False",
+			},
 		},
 
 		"if ping fails then should error": {
@@ -69,8 +77,8 @@ func TestSetup(t *testing.T) {
 			iss:           baseIssuer.DeepCopy(),
 			expectedErr:   true,
 			expectedCondition: &cmapi.IssuerCondition{
-				Reason:  "ErrorPing",
-				Message: "Failed to connect to Venafi endpoint",
+				Reason:  "ErrorSetup",
+				Message: "Failed to setup Venafi issuer: error pinging Venafi API: this is a ping error",
 				Status:  "False",
 			},
 		},
@@ -98,7 +106,7 @@ func TestSetup(t *testing.T) {
 }
 
 type testSetupT struct {
-	clientBuilder internalvenafi.VenafiClientBuilder
+	clientBuilder client.VenafiClientBuilder
 	iss           cmapi.GenericIssuer
 
 	expectedErr       bool
@@ -116,9 +124,10 @@ func (s *testSetupT) runTest(t *testing.T) {
 		},
 		issuer:        s.iss,
 		clientBuilder: s.clientBuilder,
+		log:           logf.Log.WithName("venafi"),
 	}
 
-	err := v.Setup(nil)
+	err := v.Setup(context.TODO())
 	if err != nil && !s.expectedErr {
 		t.Errorf("expected to not get an error, but got: %v", err)
 	}

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,10 +17,12 @@ limitations under the License.
 package dnsproviders
 
 import (
+	"context"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/test/e2e/framework/addon/base"
 	"github.com/jetstack/cert-manager/test/e2e/framework/config"
@@ -77,7 +79,7 @@ func (b *Cloudflare) Provision() error {
 		},
 	}
 
-	s, err := b.Base.Details().KubeClient.CoreV1().Secrets(b.Namespace).Create(secret)
+	s, err := b.Base.Details().KubeClient.CoreV1().Secrets(b.Namespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -100,7 +102,7 @@ func (b *Cloudflare) Provision() error {
 }
 
 func (b *Cloudflare) Deprovision() error {
-	b.Base.Details().KubeClient.CoreV1().Secrets(b.createdSecret.Namespace).Delete(b.createdSecret.Name, nil)
+	b.Base.Details().KubeClient.CoreV1().Secrets(b.createdSecret.Namespace).Delete(context.TODO(), b.createdSecret.Name, metav1.DeleteOptions{})
 	return nil
 }
 

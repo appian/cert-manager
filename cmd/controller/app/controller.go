@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,22 +23,22 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	clientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog"
 	"k8s.io/utils/clock"
 
 	"github.com/jetstack/cert-manager/cmd/controller/app/options"
+	"github.com/jetstack/cert-manager/pkg/acme/accounts"
 	clientset "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	intscheme "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/scheme"
 	informers "github.com/jetstack/cert-manager/pkg/client/informers/externalversions"
@@ -52,6 +52,11 @@ import (
 
 const controllerAgentName = "cert-manager"
 
+// This sets the informer's resync period to 10 hours
+// following the controller-runtime defaults
+//and following discussion: https://github.com/kubernetes-sigs/controller-runtime/pull/88#issuecomment-408500629
+const resyncPeriod = 10 * time.Hour
+
 func Run(opts *options.ControllerOptions, stopCh <-chan struct{}) {
 	rootCtx := util.ContextWithStopCh(context.Background(), stopCh)
 	rootCtx = logf.NewContext(rootCtx, nil, "controller")
@@ -64,28 +69,26 @@ func Run(opts *options.ControllerOptions, stopCh <-chan struct{}) {
 		os.Exit(1)
 	}
 
+	metricsServer, err := ctx.Metrics.Start(opts.MetricsListenAddress, opts.EnablePprof)
+	if err != nil {
+		log.Error(err, "failed to listen on prometheus address", "address", opts.MetricsListenAddress)
+		os.Exit(1)
+	}
+
 	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		metrics.Default.Start(stopCh)
-	}()
-
-	var additionalRunFuncs []controller.RunFunc
 	run := func(_ context.Context) {
 		for n, fn := range controller.Known() {
 			log := log.WithValues("controller", n)
 
 			// only run a controller if it's been enabled
 			if !util.Contains(opts.EnabledControllers, n) {
-				log.Info("not starting controller as it's disabled")
+				log.V(logf.InfoLevel).Info("not starting controller as it's disabled")
 				continue
 			}
 
 			// don't run clusterissuers controller if scoped to a single namespace
 			if ctx.Namespace != "" && n == clusterissuers.ControllerName {
-				log.Info("not starting controller as cert-manager has been scoped to a single namespace")
+				log.V(logf.InfoLevel).Info("not starting controller as cert-manager has been scoped to a single namespace")
 				continue
 			}
 
@@ -95,10 +98,9 @@ func Run(opts *options.ControllerOptions, stopCh <-chan struct{}) {
 				log.Error(err, "error starting controller")
 				os.Exit(1)
 			}
-			additionalRunFuncs = append(additionalRunFuncs, iface.AdditionalInformers()...)
 			go func(n string, fn controller.Interface) {
 				defer wg.Done()
-				log.Info("starting controller")
+				log.V(logf.InfoLevel).Info("starting controller")
 
 				workers := 5
 				err := fn.Run(workers, stopCh)
@@ -110,15 +112,12 @@ func Run(opts *options.ControllerOptions, stopCh <-chan struct{}) {
 			}(n, iface)
 		}
 
-		log.V(4).Info("starting shared informer factories")
+		log.V(logf.DebugLevel).Info("starting shared informer factories")
 		ctx.SharedInformerFactory.Start(stopCh)
 		ctx.KubeSharedInformerFactory.Start(stopCh)
-		// start any additional controllers
-		for _, r := range additionalRunFuncs {
-			go r(stopCh)
-		}
 		wg.Wait()
-		log.Info("control loops exited")
+		log.V(logf.InfoLevel).Info("control loops exited")
+		ctx.Metrics.Shutdown(metricsServer)
 		os.Exit(0)
 	}
 
@@ -127,7 +126,7 @@ func Run(opts *options.ControllerOptions, stopCh <-chan struct{}) {
 		return
 	}
 
-	log.Info("starting leader election")
+	log.V(logf.InfoLevel).Info("starting leader election")
 	leaderElectionClient, err := kubernetes.NewForConfig(rest.AddUserAgent(kubeCfg, "leader-election"))
 	if err != nil {
 		log.Error(err, "error creating leader election client")
@@ -144,6 +143,9 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating rest config: %s", err.Error())
 	}
+
+	kubeCfg.QPS = opts.KubernetesAPIQPS
+	kubeCfg.Burst = opts.KubernetesAPIBurst
 
 	// Add User-Agent to client
 	kubeCfg = rest.AddUserAgent(kubeCfg, util.CertManagerUserAgent)
@@ -164,7 +166,7 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 	if len(nameservers) == 0 {
 		nameservers = dnsutil.RecursiveNameservers
 	}
-	log.WithValues("nameservers", nameservers).Info("configured acme dns01 nameservers")
+	log.V(logf.InfoLevel).WithValues("nameservers", nameservers).Info("configured acme dns01 nameservers")
 
 	HTTP01SolverResourceRequestCPU, err := resource.ParseQuantity(opts.ACMEHTTP01SolverResourceRequestCPU)
 	if err != nil {
@@ -190,14 +192,17 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 	// Add cert-manager types to the default Kubernetes Scheme so Events can be
 	// logged properly
 	intscheme.AddToScheme(scheme.Scheme)
-	log.V(4).Info("creating event broadcaster")
+	log.V(logf.DebugLevel).Info("creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(klog.V(4).Infof)
-	eventBroadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: cl.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: controllerAgentName})
+	eventBroadcaster.StartLogging(logf.WithInfof(log.V(logf.DebugLevel)).Infof)
+	eventBroadcaster.StartRecordingToSink(&clientv1.EventSinkImpl{Interface: cl.CoreV1().Events("")})
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
-	sharedInformerFactory := informers.NewSharedInformerFactoryWithOptions(intcl, time.Second*30, informers.WithNamespace(opts.Namespace))
-	kubeSharedInformerFactory := kubeinformers.NewSharedInformerFactoryWithOptions(cl, time.Second*30, kubeinformers.WithNamespace(opts.Namespace))
+	sharedInformerFactory := informers.NewSharedInformerFactoryWithOptions(intcl, resyncPeriod, informers.WithNamespace(opts.Namespace))
+	kubeSharedInformerFactory := kubeinformers.NewSharedInformerFactoryWithOptions(cl, resyncPeriod, kubeinformers.WithNamespace(opts.Namespace))
+
+	acmeAccountRegistry := accounts.NewDefaultRegistry()
+
 	return &controller.Context{
 		RootContext:               ctx,
 		StopCh:                    stopCh,
@@ -209,6 +214,7 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 		SharedInformerFactory:     sharedInformerFactory,
 		Namespace:                 opts.Namespace,
 		Clock:                     clock.RealClock{},
+		Metrics:                   metrics.New(log),
 		ACMEOptions: controller.ACMEOptions{
 			HTTP01SolverImage:                 opts.ACMEHTTP01SolverImage,
 			HTTP01SolverResourceRequestCPU:    HTTP01SolverResourceRequestCPU,
@@ -217,12 +223,13 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 			HTTP01SolverResourceLimitsMemory:  HTTP01SolverResourceLimitsMemory,
 			DNS01CheckAuthoritative:           !opts.DNS01RecursiveNameserversOnly,
 			DNS01Nameservers:                  nameservers,
+			AccountRegistry:                   acmeAccountRegistry,
+			DNS01CheckRetryPeriod:             opts.DNS01CheckRetryPeriod,
 		},
 		IssuerOptions: controller.IssuerOptions{
 			ClusterIssuerAmbientCredentials: opts.ClusterIssuerAmbientCredentials,
 			IssuerAmbientCredentials:        opts.IssuerAmbientCredentials,
 			ClusterResourceNamespace:        opts.ClusterResourceNamespace,
-			RenewBeforeExpiryDuration:       opts.RenewBeforeExpiryDuration,
 		},
 		IngressShimOptions: controller.IngressShimOptions{
 			DefaultIssuerName:                 opts.DefaultIssuerName,
@@ -235,12 +242,6 @@ func buildControllerContext(ctx context.Context, stopCh <-chan struct{}, opts *o
 		},
 		SchedulerOptions: controller.SchedulerOptions{
 			MaxConcurrentChallenges: opts.MaxConcurrentChallenges,
-		},
-		WebhookBootstrapOptions: controller.WebhookBootstrapOptions{
-			Namespace:         opts.WebhookNamespace,
-			CASecretName:      opts.WebhookCASecretName,
-			ServingSecretName: opts.WebhookServingSecretName,
-			DNSNames:          opts.WebhookDNSNames,
 		},
 	}, kubeCfg, nil
 }
@@ -277,7 +278,7 @@ func startLeaderElection(ctx context.Context, opts *options.ControllerOptions, l
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: run,
 			OnStoppedLeading: func() {
-				log.Info("leader election lost")
+				log.V(logf.ErrorLevel).Info("leader election lost")
 				os.Exit(1)
 			},
 		},

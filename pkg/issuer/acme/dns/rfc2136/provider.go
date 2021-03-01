@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package rfc2136
 import (
 	"encoding/json"
 	"fmt"
-	"k8s.io/klog"
 	"time"
 
 	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -29,8 +28,9 @@ import (
 	restclient "k8s.io/client-go/rest"
 
 	whapi "github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 type Solver struct {
@@ -117,7 +117,7 @@ func (s *Solver) loadConfig(cfgJSON extapi.JSON) (*cmacme.ACMEIssuerDNS01Provide
 
 func loadSecretKeySelector(l corelisters.SecretNamespaceLister, sks cmmeta.SecretKeySelector, defaultKey string) ([]byte, error) {
 	if sks.Name == "" {
-		klog.Info("rfc2136: secret name not specified")
+		logf.Log.V(logf.WarnLevel).Info("rfc2136: secret name not specified")
 		return nil, nil
 	}
 	key := defaultKey

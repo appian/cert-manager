@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	certmanager "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	certmanager "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/test/e2e/framework"
 	"github.com/jetstack/cert-manager/test/e2e/util"
@@ -59,7 +59,7 @@ var _ = framework.CertManagerDescribe("CA Injector", func() {
 				Expect(f.CRClient.Create(context.Background(), issuer)).To(Succeed())
 
 				By("Waiting for Issuer to become Ready")
-				err := util.WaitForIssuerCondition(f.CertManagerClientSet.CertmanagerV1alpha2().Issuers(f.Namespace.Name),
+				err := util.WaitForIssuerCondition(f.CertManagerClientSet.CertmanagerV1().Issuers(f.Namespace.Name),
 					issuerName,
 					certmanager.IssuerCondition{
 						Type:   certmanager.IssuerConditionReady,
@@ -85,7 +85,7 @@ var _ = framework.CertManagerDescribe("CA Injector", func() {
 				cert.Namespace = f.Namespace.Name
 				Expect(f.CRClient.Create(context.Background(), cert)).To(Succeed())
 
-				err := util.WaitForCertificateCondition(f.CertManagerClientSet.CertmanagerV1alpha2().Certificates(f.Namespace.Name), "serving-certs", certmanager.CertificateCondition{
+				err := util.WaitForCertificateCondition(f.CertManagerClientSet.CertmanagerV1().Certificates(f.Namespace.Name), "serving-certs", certmanager.CertificateCondition{
 					Type:   certmanager.CertificateConditionReady,
 					Status: cmmeta.ConditionTrue,
 				}, time.Second*30)
@@ -422,7 +422,7 @@ var _ = framework.CertManagerDescribe("CA Injector", func() {
 
 	// TODO: re-enable this test.
 	// This test has been disabled in order to reduce flakes on e2e tests
-	// (hitting around 70% failure rate). This is becasue when running this test
+	// (hitting around 70% failure rate). This is because when running this test
 	// will cause tiller install to fail, therefore making other tests to fail
 	// when running bother at the same time. We should find a way to make this test run in serial.
 	// https://github.com/jetstack/cert-manager/issues/2353
@@ -431,7 +431,7 @@ var _ = framework.CertManagerDescribe("CA Injector", func() {
 	//	makeInjectable: func(namePrefix string) runtime.Object {
 	//		return &apireg.APIService{
 	//			ObjectMeta: metav1.ObjectMeta{
-	//				Name: "v1." + namePrefix + ".testing.cert-manager.io",
+	//				Name: "corev1." + namePrefix + ".testing.cert-manager.io",
 	//				Annotations: map[string]string{
 	//					certmanager.WantInjectAnnotation: types.NamespacedName{Name: "serving-certs", Namespace: f.Namespace.Name}.String(),
 	//				},

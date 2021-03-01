@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ type FakeACME struct {
 	FakeAuthorizeOrder          func(ctx context.Context, id []acme.AuthzID, opt ...acme.OrderOption) (*acme.Order, error)
 	FakeGetOrder                func(ctx context.Context, url string) (*acme.Order, error)
 	FakeFetchCert               func(ctx context.Context, url string, bundle bool) ([][]byte, error)
+	FakeFetchCertAlternatives   func(ctx context.Context, url string, bundle bool) ([][][]byte, error)
 	FakeWaitOrder               func(ctx context.Context, url string) (*acme.Order, error)
 	FakeCreateOrderCert         func(ctx context.Context, finalizeURL string, csr []byte, bundle bool) (der [][]byte, certURL string, err error)
 	FakeAccept                  func(ctx context.Context, chal *acme.Challenge) (*acme.Challenge, error)
@@ -66,6 +67,14 @@ func (f *FakeACME) FetchCert(ctx context.Context, url string, bundle bool) ([][]
 		return f.FakeFetchCert(ctx, url, bundle)
 	}
 	return nil, fmt.Errorf("FetchCert not implemented")
+}
+
+func (f *FakeACME) FetchCertAlternatives(ctx context.Context, url string, bundle bool) ([][][]byte, error) {
+	//TODO: make actual fake
+	if f.FakeFetchCertAlternatives != nil {
+		return f.FakeFetchCertAlternatives(ctx, url, bundle)
+	}
+	return nil, fmt.Errorf("FetchCertAlternatives not implemented")
 }
 
 func (f *FakeACME) WaitOrder(ctx context.Context, url string) (*acme.Order, error) {

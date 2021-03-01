@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,17 +27,17 @@ import (
 	"time"
 
 	vault "github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/helper/certutil"
+	"github.com/hashicorp/vault/sdk/helper/certutil"
 	corelisters "k8s.io/client-go/listers/core/v1"
 
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
 )
 
 var _ Interface = &Vault{}
 
 type VaultClientBuilder func(namespace string, secretsLister corelisters.SecretLister,
-	issuer v1alpha2.GenericIssuer) (Interface, error)
+	issuer v1.GenericIssuer) (Interface, error)
 
 type Interface interface {
 	Sign(csrPEM []byte, duration time.Duration) (certPEM []byte, caPEM []byte, err error)
@@ -54,14 +54,14 @@ type Client interface {
 
 type Vault struct {
 	secretsLister corelisters.SecretLister
-	issuer        v1alpha2.GenericIssuer
+	issuer        v1.GenericIssuer
 	namespace     string
 
 	client Client
 }
 
 func New(namespace string, secretsLister corelisters.SecretLister,
-	issuer v1alpha2.GenericIssuer) (Interface, error) {
+	issuer v1.GenericIssuer) (Interface, error) {
 	v := &Vault{
 		secretsLister: secretsLister,
 		namespace:     namespace,
@@ -90,7 +90,7 @@ func New(namespace string, secretsLister corelisters.SecretLister,
 func (v *Vault) Sign(csrPEM []byte, duration time.Duration) (cert []byte, ca []byte, err error) {
 	csr, err := pki.DecodeX509CertificateRequestBytes(csrPEM)
 	if err != nil {
-		return nil, nil, fmt.Errorf("faild to decode CSR for signing: %s", err)
+		return nil, nil, fmt.Errorf("failed to decode CSR for signing: %s", err)
 	}
 
 	parameters := map[string]string{
@@ -104,9 +104,16 @@ func (v *Vault) Sign(csrPEM []byte, duration time.Duration) (cert []byte, ca []b
 		"exclude_cn_from_sans": "true",
 	}
 
-	url := path.Join("/v1", v.issuer.GetSpec().Vault.Path)
+	vaultIssuer := v.issuer.GetSpec().Vault
+	url := path.Join("/v1", vaultIssuer.Path)
 
 	request := v.client.NewRequest("POST", url)
+
+	if vaultIssuer.Namespace != "" {
+		vaultReqHeaders := http.Header{}
+		vaultReqHeaders.Add("X-VAULT-NAMESPACE", vaultIssuer.Namespace)
+		request.Headers = vaultReqHeaders
+	}
 
 	if err := request.SetJSONBody(parameters); err != nil {
 		return nil, nil, fmt.Errorf("failed to build vault request: %s", err)
@@ -125,22 +132,7 @@ func (v *Vault) Sign(csrPEM []byte, duration time.Duration) (cert []byte, ca []b
 		return nil, nil, fmt.Errorf("failed to decode response returned by vault: %s", err)
 	}
 
-	parsedBundle, err := certutil.ParsePKIMap(vaultResult.Data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decode response returned by vault: %s", err)
-	}
-
-	bundle, err := parsedBundle.ToCertBundle()
-	if err != nil {
-		return nil, nil, fmt.Errorf("unable to convert certificate bundle to PEM bundle: %s", err.Error())
-	}
-
-	var caPem []byte = nil
-	if len(bundle.CAChain) > 0 {
-		caPem = []byte(bundle.CAChain[0])
-	}
-
-	return []byte(bundle.ToPEMBundle()), caPem, nil
+	return extractCertificatesFromVaultCertificateSecret(&vaultResult)
 }
 
 func (v *Vault) setToken(client Client) error {
@@ -206,7 +198,7 @@ func (v *Vault) tokenRef(name, namespace, key string) (string, error) {
 	}
 
 	if key == "" {
-		key = v1alpha2.DefaultVaultTokenAuthSecretKey
+		key = v1.DefaultVaultTokenAuthSecretKey
 	}
 
 	keyBytes, ok := secret.Data[key]
@@ -220,7 +212,7 @@ func (v *Vault) tokenRef(name, namespace, key string) (string, error) {
 	return token, nil
 }
 
-func (v *Vault) appRoleRef(appRole *v1alpha2.VaultAppRole) (roleId, secretId string, err error) {
+func (v *Vault) appRoleRef(appRole *v1.VaultAppRole) (roleId, secretId string, err error) {
 	roleId = strings.TrimSpace(appRole.RoleId)
 
 	secret, err := v.secretsLister.Secrets(v.namespace).Get(appRole.SecretRef.Name)
@@ -241,7 +233,7 @@ func (v *Vault) appRoleRef(appRole *v1alpha2.VaultAppRole) (roleId, secretId str
 	return roleId, secretId, nil
 }
 
-func (v *Vault) requestTokenWithAppRoleRef(client Client, appRole *v1alpha2.VaultAppRole) (string, error) {
+func (v *Vault) requestTokenWithAppRoleRef(client Client, appRole *v1.VaultAppRole) (string, error) {
 	roleId, secretId, err := v.appRoleRef(appRole)
 	if err != nil {
 		return "", err
@@ -290,7 +282,7 @@ func (v *Vault) requestTokenWithAppRoleRef(client Client, appRole *v1alpha2.Vaul
 	return token, nil
 }
 
-func (v *Vault) requestTokenWithKubernetesAuth(client Client, kubernetesAuth *v1alpha2.VaultKubernetesAuth) (string, error) {
+func (v *Vault) requestTokenWithKubernetesAuth(client Client, kubernetesAuth *v1.VaultKubernetesAuth) (string, error) {
 	secret, err := v.secretsLister.Secrets(v.namespace).Get(kubernetesAuth.SecretRef.Name)
 	if err != nil {
 		return "", err
@@ -298,7 +290,7 @@ func (v *Vault) requestTokenWithKubernetesAuth(client Client, kubernetesAuth *v1
 
 	key := kubernetesAuth.SecretRef.Key
 	if key == "" {
-		key = v1alpha2.DefaultVaultTokenAuthSecretKey
+		key = v1.DefaultVaultTokenAuthSecretKey
 	}
 
 	keyBytes, ok := secret.Data[key]
@@ -315,7 +307,7 @@ func (v *Vault) requestTokenWithKubernetesAuth(client Client, kubernetesAuth *v1
 
 	mountPath := kubernetesAuth.Path
 	if mountPath == "" {
-		mountPath = v1alpha2.DefaultVaultKubernetesAuthMountPath
+		mountPath = v1.DefaultVaultKubernetesAuthMountPath
 	}
 
 	url := filepath.Join(mountPath, "login")
@@ -347,4 +339,30 @@ func (v *Vault) requestTokenWithKubernetesAuth(client Client, kubernetesAuth *v1
 
 func (v *Vault) Sys() *vault.Sys {
 	return v.client.Sys()
+}
+
+func extractCertificatesFromVaultCertificateSecret(secret *certutil.Secret) ([]byte, []byte, error) {
+	parsedBundle, err := certutil.ParsePKIMap(secret.Data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decode response returned by vault: %s", err)
+	}
+
+	bundle, err := parsedBundle.ToCertBundle()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to convert certificate bundle to PEM bundle: %s", err.Error())
+	}
+
+	var caPem []byte
+	if len(bundle.CAChain) > 0 {
+		caPem = []byte(bundle.CAChain[len(bundle.CAChain)-1])
+	} else {
+		caPem = []byte(bundle.IssuingCA)
+	}
+
+	crtPems := []string{bundle.Certificate}
+	if len(bundle.CAChain) > 1 {
+		crtPems = append(crtPems, bundle.CAChain[0:len(bundle.CAChain)-1]...)
+	}
+
+	return []byte(strings.Join(crtPems, "\n")), caPem, nil
 }

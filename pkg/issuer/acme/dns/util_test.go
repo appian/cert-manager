@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import (
 	"errors"
 	"testing"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller/test"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/acmedns"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/azuredns"
@@ -34,10 +34,7 @@ import (
 )
 
 const (
-	defaultTestIssuerName      = "test-issuer"
-	defaultTestIssuerKind      = v1alpha2.IssuerKind
-	defaultTestNamespace       = gen.DefaultTestNamespace
-	defaultTestCertificateName = "test-cert"
+	defaultTestIssuerName = "test-issuer"
 )
 
 type solverFixture struct {
@@ -46,7 +43,7 @@ type solverFixture struct {
 	*test.Builder
 
 	// Issuer to be passed to functions on the Solver (a default will be used if nil)
-	Issuer v1alpha2.GenericIssuer
+	Issuer v1.GenericIssuer
 	// Challenge resource to use during tests
 	Challenge *cmacme.Challenge
 
@@ -112,10 +109,6 @@ func buildFakeSolver(b *test.Builder, dnsProviders dnsProviderConstructors) *Sol
 	return s
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 type fakeDNSProviderCall struct {
 	name string
 	args []interface{}
@@ -135,8 +128,8 @@ func newFakeDNSProviders() *fakeDNSProviders {
 		calls: []fakeDNSProviderCall{},
 	}
 	f.constructors = dnsProviderConstructors{
-		cloudDNS: func(project string, serviceAccount []byte, dns01Nameservers []string, ambient bool) (*clouddns.DNSProvider, error) {
-			f.call("clouddns", project, serviceAccount, util.RecursiveNameservers, ambient)
+		cloudDNS: func(project string, serviceAccount []byte, dns01Nameservers []string, ambient bool, hostedZoneName string) (*clouddns.DNSProvider, error) {
+			f.call("clouddns", project, serviceAccount, util.RecursiveNameservers, ambient, hostedZoneName)
 			return nil, nil
 		},
 		cloudFlare: func(email, apikey, apiToken string, dns01Nameservers []string) (*cloudflare.DNSProvider, error) {
@@ -150,8 +143,8 @@ func newFakeDNSProviders() *fakeDNSProviders {
 			f.call("route53", accessKey, secretKey, hostedZoneID, region, role, ambient, util.RecursiveNameservers)
 			return nil, nil
 		},
-		azureDNS: func(environment, clientID, clientSecret, subscriptionID, tenentID, resourceGroupName, hostedZoneName string, dns01Nameservers []string) (*azuredns.DNSProvider, error) {
-			f.call("azuredns", clientID, clientSecret, subscriptionID, tenentID, resourceGroupName, hostedZoneName, util.RecursiveNameservers)
+		azureDNS: func(environment, clientID, clientSecret, subscriptionID, tenentID, resourceGroupName, hostedZoneName string, dns01Nameservers []string, ambient bool) (*azuredns.DNSProvider, error) {
+			f.call("azuredns", clientID, clientSecret, subscriptionID, tenentID, resourceGroupName, hostedZoneName, util.RecursiveNameservers, ambient)
 			return nil, nil
 		},
 		acmeDNS: func(host string, accountJson []byte, dns01Nameservers []string) (*acmedns.DNSProvider, error) {

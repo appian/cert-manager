@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,5 +22,5 @@ import (
 )
 
 func TPPDescribe(name string, body func()) bool {
-	return framework.CertManagerDescribe("[Venafi] [TPP] "+name, body)
+	return framework.CertManagerDescribe("[Feature:Issuers:Venafi:TPP] "+name, body)
 }

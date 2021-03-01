@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,16 +17,16 @@ limitations under the License.
 package fake
 
 import (
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	issuerpkg "github.com/jetstack/cert-manager/pkg/issuer"
 )
 
 type Factory struct {
-	IssuerForFunc func(iss v1alpha2.GenericIssuer) (issuerpkg.Interface, error)
+	IssuerForFunc func(iss v1.GenericIssuer) (issuerpkg.Interface, error)
 }
 
 var _ issuerpkg.Factory = &Factory{}
 
-func (f *Factory) IssuerFor(iss v1alpha2.GenericIssuer) (issuerpkg.Interface, error) {
+func (f *Factory) IssuerFor(iss v1.GenericIssuer) (issuerpkg.Interface, error) {
 	return f.IssuerForFunc(iss)
 }

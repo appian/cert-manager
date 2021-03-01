@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,15 +17,16 @@ limitations under the License.
 package ca
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	"github.com/jetstack/cert-manager/test/e2e/framework"
-	"github.com/jetstack/cert-manager/test/e2e/framework/addon"
 	"github.com/jetstack/cert-manager/test/e2e/suite/conformance/certificates"
 )
 
@@ -51,17 +52,17 @@ type ca struct {
 func (c *ca) createCAIssuer(f *framework.Framework) cmmeta.ObjectReference {
 	By("Creating a CA Issuer")
 
-	rootCertSecret, err := f.KubeClientSet.CoreV1().Secrets(f.Namespace.Name).Create(newSigningKeypairSecret("root-ca-cert-"))
+	rootCertSecret, err := f.KubeClientSet.CoreV1().Secrets(f.Namespace.Name).Create(context.TODO(), newSigningKeypairSecret("root-ca-cert-"), metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to create root signing keypair secret")
 
 	c.secretName = rootCertSecret.Name
 
-	issuer, err := f.CertManagerClientSet.CertmanagerV1alpha2().Issuers(f.Namespace.Name).Create(&cmapi.Issuer{
+	issuer, err := f.CertManagerClientSet.CertmanagerV1().Issuers(f.Namespace.Name).Create(context.TODO(), &cmapi.Issuer{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "ca-issuer-",
 		},
 		Spec: createCAIssuerSpec(rootCertSecret.Name),
-	})
+	}, metav1.CreateOptions{})
 
 	Expect(err).NotTo(HaveOccurred(), "failed to create ca issuer")
 
@@ -75,17 +76,17 @@ func (c *ca) createCAIssuer(f *framework.Framework) cmmeta.ObjectReference {
 func (c *ca) createCAClusterIssuer(f *framework.Framework) cmmeta.ObjectReference {
 	By("Creating a CA ClusterIssuer")
 
-	rootCertSecret, err := f.KubeClientSet.CoreV1().Secrets(addon.CertManager.Namespace).Create(newSigningKeypairSecret("root-ca-cert-"))
+	rootCertSecret, err := f.KubeClientSet.CoreV1().Secrets(f.Config.Addons.CertManager.ClusterResourceNamespace).Create(context.TODO(), newSigningKeypairSecret("root-ca-cert-"), metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to create root signing keypair secret")
 
 	c.secretName = rootCertSecret.Name
 
-	issuer, err := f.CertManagerClientSet.CertmanagerV1alpha2().ClusterIssuers().Create(&cmapi.ClusterIssuer{
+	issuer, err := f.CertManagerClientSet.CertmanagerV1().ClusterIssuers().Create(context.TODO(), &cmapi.ClusterIssuer{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "ca-cluster-issuer-",
 		},
 		Spec: createCAIssuerSpec(rootCertSecret.Name),
-	})
+	}, metav1.CreateOptions{})
 
 	Expect(err).NotTo(HaveOccurred(), "failed to create ca issuer")
 
@@ -99,10 +100,10 @@ func (c *ca) createCAClusterIssuer(f *framework.Framework) cmmeta.ObjectReferenc
 func (c *ca) deleteCAClusterIssuer(f *framework.Framework, issuer cmmeta.ObjectReference) {
 	By("Deleting CA ClusterIssuer")
 
-	err := f.KubeClientSet.CoreV1().Secrets(addon.CertManager.Namespace).Delete(c.secretName, nil)
+	err := f.KubeClientSet.CoreV1().Secrets(f.Config.Addons.CertManager.ClusterResourceNamespace).Delete(context.TODO(), c.secretName, metav1.DeleteOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to delete root signing keypair secret")
 
-	err = f.CertManagerClientSet.CertmanagerV1alpha2().ClusterIssuers().Delete(issuer.Name, nil)
+	err = f.CertManagerClientSet.CertmanagerV1().ClusterIssuers().Delete(context.TODO(), issuer.Name, metav1.DeleteOptions{})
 	Expect(err).NotTo(HaveOccurred(), "failed to delete ca issuer")
 }
 

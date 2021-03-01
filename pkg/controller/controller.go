@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,21 +27,47 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	logf "github.com/jetstack/cert-manager/pkg/logs"
+	"github.com/jetstack/cert-manager/pkg/metrics"
 )
 
+type runFunc func(context.Context)
+
 type runDurationFunc struct {
-	fn       func(context.Context)
+	fn       runFunc
 	duration time.Duration
 }
 
 type queueingController interface {
-	Register(*Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, []RunFunc, error)
+	Register(*Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, error)
 	ProcessItem(ctx context.Context, key string) error
+}
+
+func NewController(
+	ctx context.Context,
+	name string,
+	metrics *metrics.Metrics,
+	syncFunc func(ctx context.Context, key string) error,
+	mustSync []cache.InformerSynced,
+	runDurationFuncs []runDurationFunc,
+	queue workqueue.RateLimitingInterface,
+) Interface {
+	return &controller{
+		ctx:              ctx,
+		name:             name,
+		metrics:          metrics,
+		syncHandler:      syncFunc,
+		mustSync:         mustSync,
+		runDurationFuncs: runDurationFuncs,
+		queue:            queue,
+	}
 }
 
 type controller struct {
 	// ctx is the root golang context for the controller
 	ctx context.Context
+
+	// name is the name for this controller
+	name string
 
 	// the function that should be called when an item is popped
 	// off the workqueue
@@ -51,9 +77,8 @@ type controller struct {
 	// this controller can start
 	mustSync []cache.InformerSynced
 
-	// additionalInformers is a list of informer 'Run' functions that must be
-	// called before starting this controller
-	additionalInformers []RunFunc
+	// a set of functions that will be called just after controller initialisation, once.
+	runFirstFuncs []runFunc
 
 	// a set of functions that should be called every duration.
 	runDurationFuncs []runDurationFunc
@@ -61,9 +86,10 @@ type controller struct {
 	// queue is a reference to the queue used to enqueue resources
 	// to be processed
 	queue workqueue.RateLimitingInterface
-}
 
-type RunFunc func(stopCh <-chan struct{})
+	// metrics is used to expose Prometheus, shared by all controllers
+	metrics *metrics.Metrics
+}
 
 // Run starts the controller loop
 func (c *controller) Run(workers int, stopCh <-chan struct{}) error {
@@ -71,7 +97,7 @@ func (c *controller) Run(workers int, stopCh <-chan struct{}) error {
 	defer cancel()
 	log := logf.FromContext(ctx)
 
-	log.Info("starting control loop")
+	log.V(logf.DebugLevel).Info("starting control loop")
 	// wait for all the informer caches we depend on are synced
 	if !cache.WaitForCacheSync(stopCh, c.mustSync...) {
 		return fmt.Errorf("error waiting for informer caches to sync")
@@ -87,24 +113,21 @@ func (c *controller) Run(workers int, stopCh <-chan struct{}) error {
 		}, time.Second, stopCh)
 	}
 
+	for _, f := range c.runFirstFuncs {
+		f(ctx)
+	}
+
 	for _, f := range c.runDurationFuncs {
 		go wait.Until(func() { f.fn(ctx) }, f.duration, stopCh)
 	}
 
 	<-stopCh
-	log.Info("shutting down queue as workqueue signaled shutdown")
+	log.V(logf.InfoLevel).Info("shutting down queue as workqueue signaled shutdown")
 	c.queue.ShutDown()
 	log.V(logf.DebugLevel).Info("waiting for workers to exit...")
 	wg.Wait()
 	log.V(logf.DebugLevel).Info("workers exited")
 	return nil
-}
-
-// AdditionalInformers is a list of additional informer 'Run' functions
-// that will be started when the shared informer factories 'Start' function
-// is called.
-func (c *controller) AdditionalInformers() []RunFunc {
-	return c.additionalInformers
 }
 
 func (b *controller) worker(ctx context.Context) {
@@ -126,13 +149,17 @@ func (b *controller) worker(ctx context.Context) {
 				return
 			}
 			log := log.WithValues("key", key)
-			log.Info("syncing item")
+			log.V(logf.DebugLevel).Info("syncing item")
+
+			// Increase sync count for this controller
+			b.metrics.IncrementSyncCallCount(b.name)
+
 			if err := b.syncHandler(ctx, key); err != nil {
-				log.Error(err, "re-queuing item  due to error processing")
+				log.Error(err, "re-queuing item due to error processing")
 				b.queue.AddRateLimited(obj)
 				return
 			}
-			log.Info("finished processing work item")
+			log.V(logf.DebugLevel).Info("finished processing work item")
 			b.queue.Forget(obj)
 		}()
 	}

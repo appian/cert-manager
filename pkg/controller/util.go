@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ func HandleOwnedResourceNamespacedFunc(log logr.Logger, queue workqueue.RateLimi
 				// TODO: how to handle namespace of owner references?
 				order, err := get(metaobj.GetNamespace(), ref.Name)
 				if err != nil {
-					log.Error(err, "error getting order referenced by resource")
+					log.Error(err, "error getting referenced owning resource")
 					continue
 				}
 				objKey, err := KeyFunc(order)

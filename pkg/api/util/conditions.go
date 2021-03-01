@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ package util
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
 	"k8s.io/utils/clock"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 // Clock is defined as a package var so it can be stubbed out during tests.
@@ -78,7 +78,7 @@ func SetIssuerCondition(i cmapi.GenericIssuer, conditionType cmapi.IssuerConditi
 		if cond.Status == status {
 			newCondition.LastTransitionTime = cond.LastTransitionTime
 		} else {
-			klog.Infof("Found status change for Issuer %q condition %q: %q -> %q; setting lastTransitionTime to %v", i.GetObjectMeta().Name, conditionType, cond.Status, status, nowTime.Time)
+			logf.V(logf.InfoLevel).Infof("Found status change for Issuer %q condition %q: %q -> %q; setting lastTransitionTime to %v", i.GetObjectMeta().Name, conditionType, cond.Status, status, nowTime.Time)
 		}
 
 		// Overwrite the existing condition
@@ -89,7 +89,7 @@ func SetIssuerCondition(i cmapi.GenericIssuer, conditionType cmapi.IssuerConditi
 	// If we've not found an existing condition of this type, we simply insert
 	// the new condition into the slice.
 	i.GetStatus().Conditions = append(i.GetStatus().Conditions, newCondition)
-	klog.Infof("Setting lastTransitionTime for Issuer %q condition %q to %v", i.GetObjectMeta().Name, conditionType, nowTime.Time)
+	logf.V(logf.InfoLevel).Infof("Setting lastTransitionTime for Issuer %q condition %q to %v", i.GetObjectMeta().Name, conditionType, nowTime.Time)
 }
 
 // CertificateHasCondition will return true if the given Certificate has a
@@ -108,6 +108,24 @@ func CertificateHasCondition(crt *cmapi.Certificate, c cmapi.CertificateConditio
 		}
 	}
 	return false
+}
+
+func GetCertificateCondition(crt *cmapi.Certificate, conditionType cmapi.CertificateConditionType) *cmapi.CertificateCondition {
+	for _, cond := range crt.Status.Conditions {
+		if cond.Type == conditionType {
+			return &cond
+		}
+	}
+	return nil
+}
+
+func GetCertificateRequestCondition(req *cmapi.CertificateRequest, conditionType cmapi.CertificateRequestConditionType) *cmapi.CertificateRequestCondition {
+	for _, cond := range req.Status.Conditions {
+		if cond.Type == conditionType {
+			return &cond
+		}
+	}
+	return nil
 }
 
 // SetCertificateCondition will set a 'condition' on the given Certificate.
@@ -141,7 +159,7 @@ func SetCertificateCondition(crt *cmapi.Certificate, conditionType cmapi.Certifi
 		if cond.Status == status {
 			newCondition.LastTransitionTime = cond.LastTransitionTime
 		} else {
-			klog.Infof("Found status change for Certificate %q condition %q: %q -> %q; setting lastTransitionTime to %v", crt.Name, conditionType, cond.Status, status, nowTime.Time)
+			logf.V(logf.InfoLevel).Infof("Found status change for Certificate %q condition %q: %q -> %q; setting lastTransitionTime to %v", crt.Name, conditionType, cond.Status, status, nowTime.Time)
 		}
 
 		// Overwrite the existing condition
@@ -152,7 +170,22 @@ func SetCertificateCondition(crt *cmapi.Certificate, conditionType cmapi.Certifi
 	// If we've not found an existing condition of this type, we simply insert
 	// the new condition into the slice.
 	crt.Status.Conditions = append(crt.Status.Conditions, newCondition)
-	klog.Infof("Setting lastTransitionTime for Certificate %q condition %q to %v", crt.Name, conditionType, nowTime.Time)
+	logf.V(logf.InfoLevel).Infof("Setting lastTransitionTime for Certificate %q condition %q to %v", crt.Name, conditionType, nowTime.Time)
+}
+
+// RemoteCertificateCondition will remove any condition with this condition type
+func RemoveCertificateCondition(crt *cmapi.Certificate, conditionType cmapi.CertificateConditionType) {
+	var updatedConditions []cmapi.CertificateCondition
+
+	// Search through existing conditions
+	for _, cond := range crt.Status.Conditions {
+		// Only add unrelated conditions
+		if cond.Type != conditionType {
+			updatedConditions = append(updatedConditions, cond)
+		}
+	}
+
+	crt.Status.Conditions = updatedConditions
 }
 
 // SetCertificateRequestCondition will set a 'condition' on the given CertificateRequest.
@@ -186,7 +219,7 @@ func SetCertificateRequestCondition(cr *cmapi.CertificateRequest, conditionType 
 		if cond.Status == status {
 			newCondition.LastTransitionTime = cond.LastTransitionTime
 		} else {
-			klog.Infof("Found status change for CertificateRequest %q condition %q: %q -> %q; setting lastTransitionTime to %v", cr.Name, conditionType, cond.Status, status, nowTime.Time)
+			logf.V(logf.InfoLevel).Infof("Found status change for CertificateRequest %q condition %q: %q -> %q; setting lastTransitionTime to %v", cr.Name, conditionType, cond.Status, status, nowTime.Time)
 		}
 
 		// Overwrite the existing condition
@@ -197,7 +230,7 @@ func SetCertificateRequestCondition(cr *cmapi.CertificateRequest, conditionType 
 	// If we've not found an existing condition of this type, we simply insert
 	// the new condition into the slice.
 	cr.Status.Conditions = append(cr.Status.Conditions, newCondition)
-	klog.Infof("Setting lastTransitionTime for CertificateRequest %q condition %q to %v", cr.Name, conditionType, nowTime.Time)
+	logf.V(logf.InfoLevel).Infof("Setting lastTransitionTime for CertificateRequest %q condition %q to %v", cr.Name, conditionType, nowTime.Time)
 }
 
 // CertificateRequestHasCondition will return true if the given
@@ -238,4 +271,38 @@ func CertificateRequestReadyReason(cr *cmapi.CertificateRequest) string {
 	}
 
 	return ""
+}
+
+// This returns with the message if the CertificateRequest contains an
+// InvalidRequest condition, and returns "" otherwise.
+func CertificateRequestInvalidRequestMessage(cr *cmapi.CertificateRequest) string {
+	if cr == nil {
+		return ""
+	}
+
+	for _, con := range cr.Status.Conditions {
+		if con.Type == cmapi.CertificateRequestConditionInvalidRequest &&
+			con.Status == cmmeta.ConditionTrue {
+			return con.Message
+		}
+	}
+
+	return ""
+}
+
+// This returns with true if the CertificateRequest contains an InvalidRequest
+// condition, and returns false otherwise.
+func CertificateRequestHasInvalidRequest(cr *cmapi.CertificateRequest) bool {
+	if cr == nil {
+		return false
+	}
+
+	for _, con := range cr.Status.Conditions {
+		if con.Type == cmapi.CertificateRequestConditionInvalidRequest &&
+			con.Status == cmmeta.ConditionTrue {
+			return true
+		}
+	}
+
+	return false
 }

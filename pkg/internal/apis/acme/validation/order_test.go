@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@ limitations under the License.
 package validation
 
 import (
-	"k8s.io/utils/pointer"
 	"reflect"
 	"testing"
 
+	"k8s.io/utils/pointer"
+
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/internal/apis/acme"
 )
 
 type testValue string
@@ -82,11 +83,11 @@ func TestValidateCertificateUpdate(t *testing.T) {
 	authorizationsFldPath := field.NewPath("status", "authorizations")
 	challengesFldPath := authorizationsFldPath.Index(0).Child("challenges")
 
-	testImmutableOrderField(t, field.NewPath("spec", "csr"), func(o *cmacme.Order, s testValue) {
+	testImmutableOrderField(t, field.NewPath("spec", "request"), func(o *cmacme.Order, s testValue) {
 		if s == testValueNone {
-			o.Spec.CSR = nil
+			o.Spec.Request = nil
 		}
-		o.Spec.CSR = []byte(s)
+		o.Spec.Request = []byte(s)
 	})
 	testImmutableOrderField(t, field.NewPath("status", "url"), func(o *cmacme.Order, s testValue) {
 		o.Status.URL = string(s)
@@ -163,7 +164,7 @@ func TestValidateCertificateUpdate(t *testing.T) {
 		o.Status.Authorizations = []cmacme.ACMEAuthorization{
 			{
 				Challenges: []cmacme.ACMEChallenge{
-					{Type: cmacme.ACMEChallengeType(s)},
+					{Type: string(s)},
 				},
 			},
 		}
@@ -203,7 +204,7 @@ func TestValidateCertificateUpdate(t *testing.T) {
 		"allows all updates if old is nil": {
 			new: &cmacme.Order{
 				Spec: cmacme.OrderSpec{
-					CSR: []byte("testing"),
+					Request: []byte("testing"),
 				},
 			},
 		},

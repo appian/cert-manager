@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,12 +22,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 
+	"github.com/jetstack/cert-manager/pkg/internal/api/validation"
 	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager"
+	v1 "github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/v1alpha2"
+	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/v1alpha3"
+	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/v1beta1"
+	cmvalidation "github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/validation"
+	cmmetav1 "github.com/jetstack/cert-manager/pkg/internal/apis/meta/v1"
 )
 
 // Install registers the API group and adds types to a scheme
 func Install(scheme *runtime.Scheme) {
 	utilruntime.Must(certmanager.AddToScheme(scheme))
+	// The first version in this list will be the default version used
+	utilruntime.Must(v1.AddToScheme(scheme))
+	utilruntime.Must(v1beta1.AddToScheme(scheme))
+	utilruntime.Must(v1alpha3.AddToScheme(scheme))
 	utilruntime.Must(v1alpha2.AddToScheme(scheme))
+
+	utilruntime.Must(cmmetav1.AddToScheme(scheme))
+}
+
+// InstallValidation registers validation functions for the API group with a
+// validation registry
+func InstallValidation(registry *validation.Registry) {
+	utilruntime.Must(cmvalidation.AddToValidationRegistry(registry))
 }

@@ -48,7 +48,7 @@ func NewDNSProvider(dns01Nameservers []string) (*DNSProvider, error) {
 // NewDNSProviderCredentials uses the supplied credentials to return a
 // DNSProvider instance configured for cloudflare.
 func NewDNSProviderCredentials(email, key, token string, dns01Nameservers []string) (*DNSProvider, error) {
-	if email == "" || (key == "" && token == "") {
+	if (email == "" && key != "") || (key == "" && token == "") {
 		return nil, fmt.Errorf("CloudFlare credentials missing")
 	}
 	if key != "" && token != "" {
@@ -179,7 +179,7 @@ func (c *DNSProvider) findTxtRecord(fqdn string) (*cloudFlareRecord, error) {
 
 	result, err := c.makeRequest(
 		"GET",
-		fmt.Sprintf("/zones/%s/dns_records?per_page=1000&type=TXT&name=%s", zoneID, util.UnFqdn(fqdn)),
+		fmt.Sprintf("/zones/%s/dns_records?per_page=100&type=TXT&name=%s", zoneID, util.UnFqdn(fqdn)),
 		nil,
 	)
 	if err != nil {
@@ -221,7 +221,9 @@ func (c *DNSProvider) makeRequest(method, uri string, body io.Reader) (json.RawM
 		return nil, err
 	}
 
-	req.Header.Set("X-Auth-Email", c.authEmail)
+	if c.authEmail != "" {
+		req.Header.Set("X-Auth-Email", c.authEmail)
+	}
 	if c.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	} else {
@@ -234,7 +236,7 @@ func (c *DNSProvider) makeRequest(method, uri string, body io.Reader) (json.RawM
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Error querying Cloudflare API -> %v", err)
+		return nil, fmt.Errorf("Error querying Cloudflare API for %s %q -> %v", method, uri, err)
 	}
 
 	defer resp.Body.Close()
@@ -254,9 +256,9 @@ func (c *DNSProvider) makeRequest(method, uri string, body io.Reader) (json.RawM
 					errStr += fmt.Sprintf("<- %d: %s", chainErr.Code, chainErr.Message)
 				}
 			}
-			return nil, fmt.Errorf("Cloudflare API Error \n%s", errStr)
+			return nil, fmt.Errorf("Cloudflare API Error for %s %q \n%s", method, uri, errStr)
 		}
-		return nil, fmt.Errorf("Cloudflare API error")
+		return nil, fmt.Errorf("Cloudflare API error for %s %q", method, uri)
 	}
 
 	return r.Result, nil

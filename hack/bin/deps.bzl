@@ -1,4 +1,4 @@
-# Copyright 2019 The Jetstack cert-manager contributors.
+# Copyright 2020 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,9 +20,86 @@ def install():
     install_misc()
     install_integration_test_dependencies()
     install_bazel_tools()
+    install_staticcheck()
     install_helm()
     install_kubectl()
+    install_oc3()
     install_kind()
+    install_kustomize()
+
+    # Install golang.org/x/build as kubernetes/repo-infra requires it for the
+    # build-tar bazel target.
+    go_repository(
+        name = "org_golang_x_build",
+        build_file_generation = "on",
+        build_file_proto_mode = "disable",
+        importpath = "golang.org/x/build",
+        sum = "h1:hXVePvSFG7tPGX4Pwk1d10ePFfoTCc0QmISfpKOHsS8=",
+        version = "v0.0.0-20190927031335-2835ba2e683f",
+    )
+
+def install_staticcheck():
+    http_archive(
+        name = "co_honnef_go_tools_staticcheck_linux",
+        sha256 = "09d2c2002236296de2c757df111fe3ae858b89f9e183f645ad01f8135c83c519",
+        urls = ["https://github.com/dominikh/go-tools/releases/download/2020.1.4/staticcheck_linux_amd64.tar.gz"],
+        build_file_content = """
+filegroup(
+    name = "file",
+    srcs = [
+        "staticcheck/staticcheck",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "co_honnef_go_tools_staticcheck_osx",
+        sha256 = "5706d101426c025e8f165309e0cb2932e54809eb035ff23ebe19df0f810699d8",
+        urls = ["https://github.com/dominikh/go-tools/releases/download/2020.1.4/staticcheck_darwin_amd64.tar.gz"],
+        build_file_content = """
+filegroup(
+    name = "file",
+    srcs = [
+        "staticcheck/staticcheck",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+# Kustomize
+def install_kustomize():
+    http_archive(
+        name = "kustomize_linux",
+        sha256 = "175938206f23956ec18dac3da0816ea5b5b485a8493a839da278faac82e3c303",
+        urls = ["https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v3.8.8/kustomize_v3.8.8_linux_amd64.tar.gz"],
+        build_file_content = """
+filegroup(
+    name = "file",
+    srcs = [
+        "kustomize",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "kustomize_osx",
+        sha256 = "561a28e5d705af3fd4d683e5059002a76d390737ee19fd5b64ef5bfe8cfa4541",
+        urls = ["https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v3.8.8/kustomize_v3.8.8_darwin_amd64.tar.gz"],
+        build_file_content = """
+filegroup(
+    name = "file",
+    srcs = [
+        "kustomize",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+    )
 
 def install_misc():
     http_file(
@@ -42,21 +119,21 @@ def install_misc():
 # Install dependencies used by the controller-runtime integration test framework
 def install_integration_test_dependencies():
     http_file(
-        name = "kube-apiserver_1_14_darwin",
+        name = "kube-apiserver_darwin_amd64",
         executable = 1,
-        sha256 = "8a7a21a5683386998ebd3a4fe9af346626ebdaf84a59094a2b2188e59e13b6d6",
-        urls = ["https://storage.googleapis.com/cert-manager-testing-assets/kube-apiserver-1.14.1_darwin_amd64"],
+        sha256 = "a874d479f183f9e4c19a5c69b44955fabd2e250b467d2d9f0641ae91a82ddbea",
+        urls = ["https://storage.googleapis.com/cert-manager-testing-assets/kube-apiserver-1.17.3_darwin_amd64"],
     )
 
     http_file(
-        name = "kube-apiserver_1_14_linux",
+        name = "kube-apiserver_linux_amd64",
         executable = 1,
-        sha256 = "1ce67dda7b125dc1adadc10ab93fe339f6ce40211ae4f1552d6de177e36a430d",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.14.1/bin/linux/amd64/kube-apiserver"],
+        sha256 = "b4505b838b27b170531afbdef5e7bfaacf83da665f21b0e3269d1775b0defb7a",
+        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.17.3/bin/linux/amd64/kube-apiserver"],
     )
 
     http_archive(
-        name = "etcd_v3_3_darwin",
+        name = "com_coreos_etcd_darwin_amd64",
         sha256 = "c8f36adf4f8fb7e974f9bafe6e390a03bc33e6e465719db71d7ed3c6447ce85a",
         urls = ["https://github.com/etcd-io/etcd/releases/download/v3.3.12/etcd-v3.3.12-darwin-amd64.zip"],
         build_file_content = """
@@ -71,7 +148,7 @@ filegroup(
     )
 
     http_archive(
-        name = "etcd_v3_3_linux",
+        name = "com_coreos_etcd_linux_amd64",
         sha256 = "dc5d82df095dae0a2970e4d870b6929590689dd707ae3d33e7b86da0f7f211b6",
         urls = ["https://github.com/etcd-io/etcd/releases/download/v3.3.12/etcd-v3.3.12-linux-amd64.tar.gz"],
         build_file_content = """
@@ -109,8 +186,8 @@ def install_helm():
     ## the version numbers in these rules.
     http_archive(
         name = "helm_darwin",
-        sha256 = "f51830036f746b7f758a40bf49e02527cc5a9f1b78c5809023e570d318eaff5c",
-        urls = ["https://get.helm.sh/helm-v2.15.1-darwin-amd64.tar.gz"],
+        sha256 = "9fffc847c61da0e06319788d3998ea173eb86c1cc5600ac3ada8d0d40c911793",
+        urls = ["https://get.helm.sh/helm-v3.3.4-darwin-amd64.tar.gz"],
         build_file_content =
             """
 filegroup(
@@ -125,8 +202,8 @@ filegroup(
 
     http_archive(
         name = "helm_linux",
-        sha256 = "b4d366bd6625477b2954941aeb7b601946aa4226af6728e3a84eac4e62a84042",
-        urls = ["https://get.helm.sh/helm-v2.15.1-linux-amd64.tar.gz"],
+        sha256 = "b664632683c36446deeb85c406871590d879491e3de18978b426769e43a1e82c",
+        urls = ["https://get.helm.sh/helm-v3.3.4-linux-amd64.tar.gz"],
         build_file_content =
             """
 filegroup(
@@ -142,150 +219,51 @@ filegroup(
 # Define rules for different kubectl versions
 def install_kubectl():
     http_file(
-        name = "kubectl_1_11_darwin",
+        name = "kubectl_1_18_darwin",
         executable = 1,
-        sha256 = "cf1feeac2fdedfb069131e7d62735b99b49ec43bf0d7565a30379c35056906c4",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.11.3/bin/darwin/amd64/kubectl"],
+        sha256 = "5eda86058a3db112821761b32afce3fdd2f6963ab580b1780a638ac323864eba",
+        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.18.0/bin/darwin/amd64/kubectl"],
     )
 
     http_file(
-        name = "kubectl_1_11_linux",
+        name = "kubectl_1_18_linux",
         executable = 1,
-        sha256 = "0d4c70484e90d4310f03f997b4432e0a97a7f5b5be5c31d281f3d05919f8b46c",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.11.3/bin/linux/amd64/kubectl"],
+        sha256 = "bb16739fcad964c197752200ff89d89aad7b118cb1de5725dc53fe924c40e3f7",
+        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.18.0/bin/linux/amd64/kubectl"],
     )
 
-    http_file(
-        name = "kubectl_1_12_darwin",
-        executable = 1,
-        sha256 = "ccddf5b78cd24d5782f4fbe436eee974ca3d901a2d850c24693efa8824737979",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.12.3/bin/darwin/amd64/kubectl"],
-    )
 
-    http_file(
-        name = "kubectl_1_12_linux",
-        executable = 1,
-        sha256 = "a93cd2ffd146bbffb6ea651b71b57fe377ba1f158c7c0eb16c14aa93394cd576",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.12.3/bin/linux/amd64/kubectl"],
+# Define rules for different oc versions
+def install_oc3():
+    http_archive(
+        name = "oc_3_11_linux",
+        sha256 = "4b0f07428ba854174c58d2e38287e5402964c9a9355f6c359d1242efd0990da3",
+        urls = ["https://github.com/openshift/origin/releases/download/v3.11.0/openshift-origin-client-tools-v3.11.0-0cbc58b-linux-64bit.tar.gz"],
+        build_file_content =
+         """
+filegroup(
+     name = "file",
+     srcs = [
+        "openshift-origin-client-tools-v3.11.0-0cbc58b-linux-64bit/oc",
+     ],
+     visibility = ["//visibility:public"],
+)
+    """,
     )
-
-    http_file(
-        name = "kubectl_1_13_darwin",
-        executable = 1,
-        sha256 = "e656a8ac9272d04febf2ed29b2e8866bfdb73f55e098026384268851d7aeba74",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.13.2/bin/darwin/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_13_linux",
-        executable = 1,
-        sha256 = "2c7ab398559c7f4f91102c4a65184e0a5a3a137060c3179e9361d9c20b467181",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.13.2/bin/linux/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_14_darwin",
-        executable = 1,
-        sha256 = "b4f6d583014f3dc9f3912d68b5aaa20a25394ecc43b42b2df3d37ef7c4a6f819",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.14.3/bin/darwin/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_14_linux",
-        executable = 1,
-        sha256 = "ebc8c2fadede148c2db1b974f0f7f93f39f19c8278619893fd530e20e9bec98f",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.14.3/bin/linux/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_15_darwin",
-        executable = 1,
-        sha256 = "63f1ace419edffa1f5ebb64a6c63597afd48f8d94a61d4fb44e820139adbbe54",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.15.0/bin/darwin/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_15_linux",
-        executable = 1,
-        sha256 = "ecec7fe4ffa03018ff00f14e228442af5c2284e57771e4916b977c20ba4e5b39",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.15.0/bin/linux/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_16_darwin",
-        executable = 1,
-        sha256 = "ab04b4e950fb7a8fa24da1d646af6d2fd7c1c7f09254af3783c920d258a94b1a",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.16.0-alpha.1/bin/darwin/amd64/kubectl"],
-    )
-
-    http_file(
-        name = "kubectl_1_16_linux",
-        executable = 1,
-        sha256 = "05942f4d57305dedeb76102a8d7ba0476914a1cd373e51d503923e6c96c4dc45",
-        urls = ["https://storage.googleapis.com/kubernetes-release/release/v1.16.0-alpha.1/bin/linux/amd64/kubectl"],
-    )
-
 ## Fetch kind images used during e2e tests
 def install_kind():
     # install kind binary
     http_file(
         name = "kind_darwin",
         executable = 1,
-        sha256 = "023f1886207132dcfc62139a86f09488a79210732b00c9ec6431d6f6b7e9d2d3",
-        urls = ["https://github.com/kubernetes-sigs/kind/releases/download/v0.4.0/kind-darwin-amd64"],
+        sha256 = "cdd8dfe7dff764429badcd636179b0e3eb937640cfe56749dd9b8f9c048cb7db",
+        urls = ["https://github.com/kubernetes-sigs/kind/releases/download/v0.8.1/kind-darwin-amd64"],
     )
 
     http_file(
         name = "kind_linux",
         executable = 1,
-        sha256 = "a97f7d6d97bc0e261ea85433ca564269f117baf0fae051f16b296d2d7541f8dd",
-        urls = ["https://github.com/kubernetes-sigs/kind/releases/download/v0.4.0/kind-linux-amd64"],
+        sha256 = "781c3db479b805d161b7c2c7a31896d1a504b583ebfcce8fcd49538c684d96bc",
+        urls = ["https://github.com/kubernetes-sigs/kind/releases/download/v0.8.1/kind-linux-amd64"],
     )
 
-    container_pull(
-        name = "kind-1.11",
-        registry = "index.docker.io",
-        repository = "kindest/node",
-        tag = "v1.11.10",
-        digest = "sha256:176845d919899daef63d0dbd1cf62f79902c38b8d2a86e5fa041e491ab795d33",
-    )
-
-    container_pull(
-        name = "kind-1.12",
-        registry = "index.docker.io",
-        repository = "kindest/node",
-        tag = "v1.12.9",
-        digest = "sha256:bcb79eb3cd6550c1ba9584ce57c832dcd6e442913678d2785307a7ad9addc029",
-    )
-
-    container_pull(
-        name = "kind-1.13",
-        registry = "index.docker.io",
-        repository = "kindest/node",
-        tag = "v1.13.7",
-        digest = "sha256:f3f1cfc2318d1eb88d91253a9c5fa45f6e9121b6b1e65aea6c7ef59f1549aaaf",
-    )    
-
-    container_pull(
-        name = "kind-1.14",
-        registry = "index.docker.io",
-        repository = "kindest/node",
-        tag = "v1.14.3",
-        digest = "sha256:583166c121482848cd6509fbac525dd62d503c52a84ff45c338ee7e8b5cfe114",
-    )
-
-    container_pull(
-        name = "kind-1.15",
-        registry = "index.docker.io",
-        repository = "kindest/node",
-        tag = "v1.15.0",
-        digest = "sha256:b4d092fd2b507843dd096fe6c85d06a27a0cbd740a0b32a880fe61aba24bb478",
-    )
-
-    container_pull(
-        name = "kind-1.16",
-        registry = "eu.gcr.io",
-        repository = "jetstack-build-infra-images/kind-node",
-        tag = "1.16.0-alpha.1",
-        digest = "sha256:b9775b688fda2e6434cda1b9016baf876f381a8325961f59b9ae238166259885",
-    )

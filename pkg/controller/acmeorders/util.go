@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,14 +20,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/jetstack/cert-manager/pkg/acme"
 	"hash/fnv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/jetstack/cert-manager/pkg/acme"
 	acmecl "github.com/jetstack/cert-manager/pkg/acme/client"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	"github.com/jetstack/cert-manager/pkg/api/util"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/controller/acmeorders/selectors"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
@@ -37,13 +38,21 @@ var (
 )
 
 func buildRequiredChallenges(ctx context.Context, cl acmecl.Interface, issuer cmapi.GenericIssuer, o *cmacme.Order) ([]cmacme.Challenge, error) {
-	chs := make([]cmacme.Challenge, len(o.Status.Authorizations))
-	for i, a := range o.Status.Authorizations {
+	chs := make([]cmacme.Challenge, 0)
+	for _, a := range o.Status.Authorizations {
+		if a.InitialState == cmacme.Valid {
+			wc := false
+			if a.Wildcard != nil {
+				wc = *a.Wildcard
+			}
+			logf.FromContext(ctx).V(logf.DebugLevel).Info("Authorization already valid, not creating Challenge resource", "identifier", a.Identifier, "is_wildcard", wc)
+			continue
+		}
 		ch, err := buildChallenge(ctx, cl, issuer, o, a)
 		if err != nil {
 			return nil, err
 		}
-		chs[i] = *ch
+		chs = append(chs, *ch)
 	}
 	return chs, nil
 }
@@ -56,7 +65,7 @@ func buildChallenge(ctx context.Context, cl acmecl.Interface, issuer cmapi.Gener
 		return nil, err
 	}
 
-	chName, err := buildChallengeName(o.Name, *chSpec)
+	chName, err := util.ComputeName(o.Name, chSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -70,15 +79,6 @@ func buildChallenge(ctx context.Context, cl acmecl.Interface, issuer cmapi.Gener
 		},
 		Spec: *chSpec,
 	}, nil
-}
-
-func buildChallengeName(orderName string, chSpec cmacme.ChallengeSpec) (string, error) {
-	hash, err := hashChallenge(chSpec)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%s-%d", orderName, hash), nil
 }
 
 func hashChallenge(spec cmacme.ChallengeSpec) (uint32, error) {
@@ -268,7 +268,15 @@ func challengeSpecForAuthorization(ctx context.Context, cl acmecl.Interface, iss
 		return nil, fmt.Errorf("no configured challenge solvers can be used for this challenge")
 	}
 
-	key, err := keyForChallenge(cl, selectedChallenge)
+	// It should never be possible for this case to be hit as earlier in this
+	// method we already assert that the challenge type is one of 'http-01'
+	// or 'dns-01'.
+	chType, err := challengeType(selectedChallenge.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := keyForChallenge(cl, selectedChallenge.Token, chType)
 	if err != nil {
 		return nil, err
 	}
@@ -281,16 +289,28 @@ func challengeSpecForAuthorization(ctx context.Context, cl acmecl.Interface, iss
 
 	// 5. construct Challenge resource with spec.solver field set
 	return &cmacme.ChallengeSpec{
-		AuthzURL:  authz.URL,
-		Type:      selectedChallenge.Type,
-		URL:       selectedChallenge.URL,
-		DNSName:   authz.Identifier,
-		Token:     selectedChallenge.Token,
-		Key:       key,
-		Solver:    selectedSolver,
+		AuthorizationURL: authz.URL,
+		Type:             chType,
+		URL:              selectedChallenge.URL,
+		DNSName:          authz.Identifier,
+		Token:            selectedChallenge.Token,
+		Key:              key,
+		// selectedSolver cannot be nil due to the check above.
+		Solver:    *selectedSolver,
 		Wildcard:  wc,
 		IssuerRef: o.Spec.IssuerRef,
 	}, nil
+}
+
+func challengeType(t string) (cmacme.ACMEChallengeType, error) {
+	switch t {
+	case "http-01":
+		return cmacme.ACMEChallengeTypeHTTP01, nil
+	case "dns-01":
+		return cmacme.ACMEChallengeTypeDNS01, nil
+	default:
+		return "", fmt.Errorf("unsupported challenge type: %v", t)
+	}
 }
 
 func applyIngressParameterAnnotationOverrides(o *cmacme.Order, s *cmacme.ACMEChallengeSolver) error {
@@ -319,17 +339,15 @@ func applyIngressParameterAnnotationOverrides(o *cmacme.Order, s *cmacme.ACMECha
 	return nil
 }
 
-func keyForChallenge(cl acmecl.Interface, challenge *cmacme.ACMEChallenge) (string, error) {
-	var err error
-	switch challenge.Type {
+func keyForChallenge(cl acmecl.Interface, token string, chType cmacme.ACMEChallengeType) (string, error) {
+	switch chType {
 	case cmacme.ACMEChallengeTypeHTTP01:
-		return cl.HTTP01ChallengeResponse(challenge.Token)
+		return cl.HTTP01ChallengeResponse(token)
 	case cmacme.ACMEChallengeTypeDNS01:
-		return cl.DNS01ChallengeRecord(challenge.Token)
+		return cl.DNS01ChallengeRecord(token)
 	default:
-		err = fmt.Errorf("unsupported challenge type %s", challenge.Type)
+		return "", fmt.Errorf("unsupported challenge type: %v", chType)
 	}
-	return "", err
 }
 
 func anyChallengesFailed(chs []*cmacme.Challenge) bool {

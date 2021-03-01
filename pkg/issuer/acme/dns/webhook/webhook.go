@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package webhook
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,11 +27,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog"
 
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
 	"github.com/jetstack/cert-manager/pkg/client/clientset/versioned/scheme"
+	logf "github.com/jetstack/cert-manager/pkg/logs"
 )
 
 type Webhook struct {
@@ -48,7 +49,7 @@ func (r *Webhook) Present(ch *v1alpha1.ChallengeRequest) error {
 		return err
 	}
 
-	result := cl.Post().Resource(solverName).Body(pl).Do()
+	result := cl.Post().Resource(solverName).Body(pl).Do(context.TODO())
 	// we will check this error after parsing the response
 	resErr := result.Error()
 
@@ -59,7 +60,7 @@ func (r *Webhook) Present(ch *v1alpha1.ChallengeRequest) error {
 	}
 
 	if respPayload.Response.Success && resErr == nil {
-		klog.Infof("Present call succeeded")
+		logf.Log.V(logf.DebugLevel).Info("Present call succeeded")
 		return nil
 	}
 
@@ -84,7 +85,7 @@ func (r *Webhook) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 		return err
 	}
 
-	result := cl.Post().Resource(solverName).Body(pl).Do()
+	result := cl.Post().Resource(solverName).Body(pl).Do(context.TODO())
 	// we will check this error after parsing the response
 	resErr := result.Error()
 
@@ -95,7 +96,7 @@ func (r *Webhook) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	}
 
 	if respPayload.Response.Success && resErr == nil {
-		klog.Infof("CleanUp call succeeded")
+		logf.Log.V(logf.DebugLevel).Info("CleanUp call succeeded")
 		return nil
 	}
 

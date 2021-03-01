@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package framework
 
 import (
+	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo"
@@ -33,7 +34,7 @@ import (
 	apireg "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1beta1"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	clientset "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	certmgrscheme "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/scheme"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
@@ -169,10 +170,6 @@ func (f *Framework) AfterEach() {
 	By("Deleting test namespace")
 	err := f.DeleteKubeNamespace(f.Namespace.Name)
 	Expect(err).NotTo(HaveOccurred())
-
-	By("Waiting for test namespace to no longer exist")
-	err = f.WaitForKubeNamespaceNotExist(f.Namespace.Name)
-	Expect(err).NotTo(HaveOccurred())
 }
 
 func (f *Framework) printAddonLogs() {
@@ -231,9 +228,9 @@ func (f *Framework) Helper() *helper.Helper {
 	return f.helper
 }
 
-func (f *Framework) CertificateDurationValid(c *v1alpha2.Certificate, duration time.Duration, fuzz time.Duration) {
+func (f *Framework) CertificateDurationValid(c *v1.Certificate, duration, fuzz time.Duration) {
 	By("Verifying TLS certificate exists")
-	secret, err := f.KubeClientSet.CoreV1().Secrets(f.Namespace.Name).Get(c.Spec.SecretName, metav1.GetOptions{})
+	secret, err := f.KubeClientSet.CoreV1().Secrets(f.Namespace.Name).Get(context.TODO(), c.Spec.SecretName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
 	certBytes, ok := secret.Data[api.TLSCertKey]
 	if !ok {
@@ -249,7 +246,7 @@ func (f *Framework) CertificateDurationValid(c *v1alpha2.Certificate, duration t
 	}
 }
 
-func (f *Framework) CertificateRequestDurationValid(c *v1alpha2.CertificateRequest, duration time.Duration) {
+func (f *Framework) CertificateRequestDurationValid(c *v1.CertificateRequest, duration, fuzz time.Duration) {
 	By("Verifying TLS certificate exists")
 	if len(c.Status.Certificate) == 0 {
 		Failf("No certificate data found for CertificateRequest %s", c.Name)
@@ -257,8 +254,10 @@ func (f *Framework) CertificateRequestDurationValid(c *v1alpha2.CertificateReque
 	cert, err := pki.DecodeX509CertificateBytes(c.Status.Certificate)
 	Expect(err).NotTo(HaveOccurred())
 	By("Verifying that the duration is valid")
-	if cert.NotAfter.Sub(cert.NotBefore) != duration {
-		Failf("Expected duration of %s, got %s [NotBefore: %s, NotAfter: %s]", duration, cert.NotAfter.Sub(cert.NotBefore), cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
+	certDuration := cert.NotAfter.Sub(cert.NotBefore)
+	if certDuration > (duration+fuzz) || certDuration < duration {
+		Failf("Expected duration of %s, got %s (fuzz: %s) [NotBefore: %s, NotAfter: %s]", duration, certDuration,
+			fuzz, cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
 	}
 }
 

@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/jetstack/cert-manager/pkg/acme"
-	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1alpha2"
-	cmacmelisters "github.com/jetstack/cert-manager/pkg/client/listers/acme/v1alpha2"
+	cmacme "github.com/jetstack/cert-manager/pkg/apis/acme/v1"
+	cmacmelisters "github.com/jetstack/cert-manager/pkg/client/listers/acme/v1"
 	"github.com/jetstack/cert-manager/pkg/logs"
 )
 
@@ -69,6 +69,9 @@ func (s *Scheduler) scheduleN(n int, allChallenges []*cmacme.Challenge) ([]*cmac
 
 	numberToSelect := n
 	remainingNumberAllowedChallenges := s.maxConcurrentChallenges - inProgressChallengeCount
+	if remainingNumberAllowedChallenges < 0 {
+		remainingNumberAllowedChallenges = 0
+	}
 	if numberToSelect > remainingNumberAllowedChallenges {
 		numberToSelect = remainingNumberAllowedChallenges
 	}

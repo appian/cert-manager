@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@ limitations under the License.
 package matcher
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
 	"github.com/onsi/gomega/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/jetstack/cert-manager/test/e2e/framework"
 )
 
@@ -54,11 +55,11 @@ func toGenericCondition(c interface{}) (*genericCondition, error) {
 func (c *conditionMatcher) getUpToDateResource(obj interface{}) (interface{}, error) {
 	switch obj := obj.(type) {
 	case *cmapi.Certificate:
-		return c.f.CertManagerClientSet.CertmanagerV1alpha2().Certificates(obj.Namespace).Get(obj.Name, metav1.GetOptions{})
+		return c.f.CertManagerClientSet.CertmanagerV1().Certificates(obj.Namespace).Get(context.TODO(), obj.Name, metav1.GetOptions{})
 	case *cmapi.Issuer:
-		return c.f.CertManagerClientSet.CertmanagerV1alpha2().Issuers(obj.Namespace).Get(obj.Name, metav1.GetOptions{})
+		return c.f.CertManagerClientSet.CertmanagerV1().Issuers(obj.Namespace).Get(context.TODO(), obj.Name, metav1.GetOptions{})
 	case *cmapi.CertificateRequest:
-		return c.f.CertManagerClientSet.CertmanagerV1alpha2().CertificateRequests(obj.Namespace).Get(obj.Name, metav1.GetOptions{})
+		return c.f.CertManagerClientSet.CertmanagerV1().CertificateRequests(obj.Namespace).Get(context.TODO(), obj.Name, metav1.GetOptions{})
 	default:
 		return nil, fmt.Errorf("unsupported resource type %T", c)
 	}

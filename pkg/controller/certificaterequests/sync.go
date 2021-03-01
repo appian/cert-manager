@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,24 +24,24 @@ import (
 
 	"github.com/kr/pretty"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
 	"github.com/jetstack/cert-manager/pkg/apis/certmanager"
-	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	v1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
-	"github.com/jetstack/cert-manager/pkg/internal/apis/certmanager/validation"
+	internalapi "github.com/jetstack/cert-manager/pkg/internal/apis/certmanager"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
+	"github.com/jetstack/cert-manager/pkg/webhook"
 )
 
 var (
-	certificateRequestGvk = v1alpha2.SchemeGroupVersion.WithKind(v1alpha2.CertificateRequestKind)
+	certificateRequestGvk = v1.SchemeGroupVersion.WithKind(v1.CertificateRequestKind)
 )
 
-func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) (err error) {
-	c.metrics.IncrementSyncCallCount(ControllerName)
-
+func (c *Controller) Sync(ctx context.Context, cr *v1.CertificateRequest) (err error) {
 	log := logf.FromContext(ctx)
 	dbg := log.V(logf.DebugLevel)
 
@@ -51,11 +51,11 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 	}
 
 	switch apiutil.CertificateRequestReadyReason(cr) {
-	case v1alpha2.CertificateRequestReasonFailed:
+	case v1.CertificateRequestReasonFailed:
 		dbg.Info("certificate request Ready condition failed so skipping processing")
 		return
 
-	case v1alpha2.CertificateRequestReasonIssued:
+	case v1.CertificateRequestReasonIssued:
 		dbg.Info("certificate request Ready condition true so skipping processing")
 		return
 	}
@@ -63,7 +63,7 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 	crCopy := cr.DeepCopy()
 
 	defer func() {
-		if _, saveErr := c.updateCertificateRequestStatus(ctx, cr, crCopy); saveErr != nil {
+		if _, saveErr := c.updateCertificateRequestStatusAndAnnotations(ctx, cr, crCopy); saveErr != nil {
 			err = utilerrors.NewAggregate([]error{saveErr, err})
 		}
 	}()
@@ -96,13 +96,13 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 	if issuerType != c.issuerType {
 		c.log.WithValues(
 			logf.RelatedResourceKindKey, issuerType,
-		).V(5).Info("issuer reference type does not match controller resource kind, ignoring")
+		).V(logf.DebugLevel).Info("issuer reference type does not match controller resource kind, ignoring")
 		return nil
 	}
 
 	// check ready condition
-	if !apiutil.IssuerHasCondition(issuerObj, v1alpha2.IssuerCondition{
-		Type:   v1alpha2.IssuerConditionReady,
+	if !apiutil.IssuerHasCondition(issuerObj, v1.IssuerCondition{
+		Type:   v1.IssuerConditionReady,
 		Status: cmmeta.ConditionTrue,
 	}) {
 		c.reporter.Pending(crCopy, nil, "IssuerNotReady",
@@ -112,7 +112,7 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 
 	dbg.Info("validating CertificateRequest resource object")
 
-	el := validation.ValidateCertificateRequest(crCopy)
+	el := webhook.ValidationRegistry.Validate(crCopy, internalapi.SchemeGroupVersion.WithKind("CertificateRequest"))
 	if len(el) > 0 {
 		c.reporter.Failed(crCopy, el.ToAggregate(), "BadConfig",
 			"Resource validation failed")
@@ -123,8 +123,6 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 		dbg.Info("certificate field is already set in status so skipping processing")
 		return nil
 	}
-
-	// TODO: Metrics??
 
 	dbg.Info("invoking sign function as existing certificate does not exist")
 
@@ -159,8 +157,15 @@ func (c *Controller) Sync(ctx context.Context, cr *v1alpha2.CertificateRequest) 
 	return nil
 }
 
-func (c *Controller) updateCertificateRequestStatus(ctx context.Context, old, new *v1alpha2.CertificateRequest) (*v1alpha2.CertificateRequest, error) {
+func (c *Controller) updateCertificateRequestStatusAndAnnotations(ctx context.Context, old, new *v1.CertificateRequest) (*v1.CertificateRequest, error) {
 	log := logf.FromContext(ctx, "updateStatus")
+
+	// if annotations changed we have to call .Update() and not .UpdateStatus()
+	if !reflect.DeepEqual(old.Annotations, new.Annotations) {
+		log.V(logf.DebugLevel).Info("updating resource due to change in annotations", "diff", pretty.Diff(old.Annotations, new.Annotations))
+		return c.cmClient.CertmanagerV1().CertificateRequests(new.Namespace).Update(context.TODO(), new, metav1.UpdateOptions{})
+	}
+
 	oldBytes, _ := json.Marshal(old.Status)
 	newBytes, _ := json.Marshal(new.Status)
 	if reflect.DeepEqual(oldBytes, newBytes) {
@@ -168,5 +173,5 @@ func (c *Controller) updateCertificateRequestStatus(ctx context.Context, old, ne
 	}
 
 	log.V(logf.DebugLevel).Info("updating resource due to change in status", "diff", pretty.Diff(string(oldBytes), string(newBytes)))
-	return c.cmClient.CertmanagerV1alpha2().CertificateRequests(new.Namespace).UpdateStatus(new)
+	return c.cmClient.CertmanagerV1().CertificateRequests(new.Namespace).UpdateStatus(context.TODO(), new, metav1.UpdateOptions{})
 }

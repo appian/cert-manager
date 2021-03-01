@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Jetstack cert-manager contributors.
+Copyright 2020 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,14 +24,14 @@ import (
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
-	extlisters "k8s.io/client-go/listers/extensions/v1beta1"
+	networkinglisters "k8s.io/client-go/listers/networking/v1beta1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	cmv1alpha1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	clientset "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
-	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1alpha2"
+	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1"
 	controllerpkg "github.com/jetstack/cert-manager/pkg/controller"
 	"github.com/jetstack/cert-manager/pkg/issuer"
 	logf "github.com/jetstack/cert-manager/pkg/logs"
@@ -58,7 +58,7 @@ type controller struct {
 	cmClient clientset.Interface
 	recorder record.EventRecorder
 
-	ingressLister       extlisters.IngressLister
+	ingressLister       networkinglisters.IngressLister
 	certificateLister   cmlisters.CertificateLister
 	issuerLister        cmlisters.IssuerLister
 	clusterIssuerLister cmlisters.ClusterIssuerLister
@@ -70,7 +70,7 @@ type controller struct {
 // Register registers and constructs the controller using the provided context.
 // It returns the workqueue to be used to enqueue items, a list of
 // InformerSynced functions that must be synced, or an error.
-func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, []controllerpkg.RunFunc, error) {
+func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitingInterface, []cache.InformerSynced, error) {
 	// construct a new named logger to be reused throughout the controller
 	c.log = logf.FromContext(ctx.RootContext, ControllerName)
 
@@ -78,9 +78,9 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	c.queue = workqueue.NewNamedRateLimitingQueue(controllerpkg.DefaultItemBasedRateLimiter(), ControllerName)
 
 	// obtain references to all the informers used by this controller
-	ingressInformer := ctx.KubeSharedInformerFactory.Extensions().V1beta1().Ingresses()
-	certificatesInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().Certificates()
-	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().Issuers()
+	ingressInformer := ctx.KubeSharedInformerFactory.Networking().V1beta1().Ingresses()
+	certificatesInformer := ctx.SharedInformerFactory.Certmanager().V1().Certificates()
+	issuerInformer := ctx.SharedInformerFactory.Certmanager().V1().Issuers()
 	// build a list of InformerSynced functions that will be returned by the Register method.
 	// the controller will only begin processing items once all of these informers have synced.
 	mustSync := []cache.InformerSynced{
@@ -98,7 +98,7 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 	// if we are running in non-namespaced mode (i.e. --namespace=""), we also
 	// register event handlers and obtain a lister for clusterissuers.
 	if ctx.Namespace == "" {
-		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1alpha2().ClusterIssuers()
+		clusterIssuerInformer := ctx.SharedInformerFactory.Certmanager().V1().ClusterIssuers()
 		mustSync = append(mustSync, clusterIssuerInformer.Informer().HasSynced)
 		c.clusterIssuerLister = clusterIssuerInformer.Lister()
 	}
@@ -118,11 +118,11 @@ func (c *controller) Register(ctx *controllerpkg.Context) (workqueue.RateLimitin
 		ctx.DefaultIssuerGroup,
 	}
 
-	return c.queue, mustSync, nil, nil
+	return c.queue, mustSync, nil
 }
 
 func (c *controller) certificateDeleted(obj interface{}) {
-	crt, ok := obj.(*cmv1alpha1.Certificate)
+	crt, ok := obj.(*cmapi.Certificate)
 	if !ok {
 		runtime.HandleError(fmt.Errorf("Object is not a certificate object %#v", obj))
 		return
@@ -162,8 +162,6 @@ func (c *controller) ProcessItem(ctx context.Context, key string) error {
 
 	return c.Sync(ctx, crt)
 }
-
-var keyFunc = controllerpkg.KeyFunc
 
 func init() {
 	controllerpkg.Register(ControllerName, func(ctx *controllerpkg.Context) (controllerpkg.Interface, error) {
